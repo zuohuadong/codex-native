@@ -1,0 +1,141 @@
+diff --git a/packages/core/node_modules/@scriptc/runtime/src/scr_runtime.h b/packages/core/node_modules/@scriptc/runtime/src/scr_runtime.h
+--- a/packages/core/node_modules/@scriptc/runtime/src/scr_runtime.h
++++ b/packages/core/node_modules/@scriptc/runtime/src/scr_runtime.h
+@@ -25,6 +25,19 @@ typedef ptrdiff_t ssize_t;
+  * getrandom syscall. Both files are selected by cc.ts only for their target. */
+ #ifdef _WIN32
+ #include <time.h> /* time_t / struct tm for the gmtime_r shim */
++#if defined(_MSC_VER)
++#define SCR_WIN32_TIME_SHIMS 1
++#ifndef CLOCK_REALTIME
++#define CLOCK_REALTIME 0
++#endif
++#ifndef CLOCK_MONOTONIC
++#define CLOCK_MONOTONIC 1
++#endif
++int scr_win_clock_gettime(int clock_id, struct timespec *ts);
++int scr_win_nanosleep(const struct timespec *request, struct timespec *remaining);
++#define clock_gettime scr_win_clock_gettime
++#define nanosleep scr_win_nanosleep
++#endif
+ char *stpcpy(char *dst, const char *src);
+ void arc4random_buf(void *buf, size_t n);
+ struct tm *gmtime_r(const time_t *t, struct tm *out);
+diff --git a/packages/core/node_modules/@scriptc/runtime/src/scr_win.c b/packages/core/node_modules/@scriptc/runtime/src/scr_win.c
+--- a/packages/core/node_modules/@scriptc/runtime/src/scr_win.c
++++ b/packages/core/node_modules/@scriptc/runtime/src/scr_win.c
+@@ -8,11 +8,114 @@
+ #include "scr_runtime.h"
+ 
+ #include <ctype.h>
++#include <errno.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <time.h>
+ #include <windows.h>
+ 
++#ifdef SCR_WIN32_TIME_SHIMS
++/* MSVC's CRT has struct timespec but not POSIX clocks. Wall time comes from
++ * FILETIME; deadlines use QPC so elapsed time cannot jump with the system
++ * clock. These names stay private to MSVC targets through the header gate. */
++static void scr_win_filetime_to_timespec(uint64_t ticks, struct timespec *ts) {
++  const uint64_t ticks_per_second = 10000000ULL;
++  const uint64_t unix_epoch = 116444736000000000ULL;
++  if (ticks >= unix_epoch) {
++    const uint64_t unix_ticks = ticks - unix_epoch;
++    ts->tv_sec = (time_t)(unix_ticks / ticks_per_second);
++    ts->tv_nsec = (long)((unix_ticks % ticks_per_second) * 100ULL);
++    return;
++  }
++  const uint64_t before_epoch = unix_epoch - ticks;
++  const uint64_t seconds = (before_epoch + ticks_per_second - 1ULL) /
++      ticks_per_second;
++  const uint64_t subsecond_ticks = seconds * ticks_per_second - before_epoch;
++  ts->tv_sec = -(time_t)seconds;
++  ts->tv_nsec = (long)(subsecond_ticks * 100ULL);
++}
++
++static int scr_win_qpc_to_timespec(LONGLONG counter, LONGLONG frequency,
++                                   struct timespec *ts) {
++  if (counter < 0 || frequency <= 0 || ts == NULL) return -1;
++  ts->tv_sec = (time_t)(counter / frequency);
++  const LONGLONG remainder = counter % frequency;
++  ts->tv_nsec = (long)(((long double)remainder * 1000000000.0L) /
++                       (long double)frequency);
++  if (ts->tv_nsec >= 1000000000L) {
++    ts->tv_sec += 1;
++    ts->tv_nsec = 0;
++  }
++  return 0;
++}
++
++static int scr_win_timespec_to_milliseconds(const struct timespec *request,
++                                             uint64_t *milliseconds) {
++  if (request == NULL || milliseconds == NULL || request->tv_sec < 0 ||
++      request->tv_nsec < 0 || request->tv_nsec >= 1000000000L) return -1;
++  const uint64_t seconds = (uint64_t)request->tv_sec;
++  const uint64_t subsecond_milliseconds =
++      ((uint64_t)request->tv_nsec + 999999ULL) / 1000000ULL;
++  if (seconds > (UINT64_MAX - subsecond_milliseconds) / 1000ULL) return -1;
++  *milliseconds = seconds * 1000ULL + subsecond_milliseconds;
++  return 0;
++}
++
++static DWORD scr_win_sleep_chunk(uint64_t milliseconds) {
++  return milliseconds > 0xfffffffeULL ? 0xfffffffeUL : (DWORD)milliseconds;
++}
++
++int scr_win_clock_gettime(int clock_id, struct timespec *ts) {
++  if (ts == NULL) {
++    errno = EINVAL;
++    return -1;
++  }
++  if (clock_id == CLOCK_REALTIME) {
++    FILETIME ft;
++    GetSystemTimeAsFileTime(&ft);
++    const uint64_t ticks = ((uint64_t)ft.dwHighDateTime << 32) |
++        (uint64_t)ft.dwLowDateTime;
++    scr_win_filetime_to_timespec(ticks, ts);
++    return 0;
++  }
++  if (clock_id == CLOCK_MONOTONIC) {
++    LARGE_INTEGER counter;
++    LARGE_INTEGER frequency;
++    if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0 ||
++        !QueryPerformanceCounter(&counter)) {
++      errno = EINVAL;
++      return -1;
++    }
++    if (scr_win_qpc_to_timespec(counter.QuadPart, frequency.QuadPart, ts) != 0) {
++      errno = EINVAL;
++      return -1;
++    }
++    return 0;
++  }
++  errno = EINVAL;
++  return -1;
++}
++
++int scr_win_nanosleep(const struct timespec *request,
++                      struct timespec *remaining) {
++  uint64_t milliseconds = 0;
++  if (scr_win_timespec_to_milliseconds(request, &milliseconds) != 0) {
++    errno = EINVAL;
++    return -1;
++  }
++  while (milliseconds > 0) {
++    const DWORD chunk = scr_win_sleep_chunk(milliseconds);
++    Sleep(chunk);
++    milliseconds -= chunk;
++  }
++  if (remaining != NULL) {
++    remaining->tv_sec = 0;
++    remaining->tv_nsec = 0;
++  }
++  return 0;
++}
++#endif
++
+ /* POSIX.1-2008 stpcpy: strcpy returning the END of the copy — scr_number.c
+  * (untouchable by project rule; ryu-adjacent) builds "e+"/"e-" exponent
+  * tails with it. */

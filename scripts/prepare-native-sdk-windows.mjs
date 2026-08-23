@@ -23,6 +23,7 @@ const runtimePatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-volt-
 const scriptcPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-integer-provenance.patch");
 const scriptcWindowsCleanupPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-windows-cleanup.patch");
 const scriptcWindowsMsvcPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-windows-msvc.patch");
+const scriptcWindowsTimePatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-windows-time.patch");
 const typescriptPlatformPackage = process.platform === "win32"
   ? "typescript-win32-x64"
   : process.platform === "darwin"
@@ -131,6 +132,7 @@ requireHash(path.join(installRoot, "node_modules", "@scriptc", "compiler", "dist
 requireHash(path.join(installRoot, "node_modules", "@scriptc", "compiler", "dist", "backend", "cc.js"), "28ac9db898a6af58669d19902f878c1a283ac2d52263dd7fc70a4d569407a6f6");
 requireHash(path.join(installRoot, "node_modules", "@scriptc", "runtime", "package.json"), "4024f28a899d2f48faac3b8521eb1f774d4dd8c83ef14d6595da828c40d35e83");
 requireHash(path.join(installRoot, "node_modules", "@scriptc", "runtime", "src", "scr_runtime.h"), "fdb097e59a6167a1b8eca90d7cdb4f3763d2b33abcc9cb88e649eed1d24fcbfa");
+requireHash(path.join(installRoot, "node_modules", "@scriptc", "runtime", "src", "scr_win.c"), "373290aafc62ec83aecaacb031058ca606cbe6f2326eb38d2043c60e86a4a2ea");
 requireHash(path.join(installRoot, "node_modules", "typescript", "package.json"), "3722b30210616a13a3213ded11575ba6b2dbab10c32a5ef67afca8513e27017e");
 requireHash(path.join(installRoot, "node_modules", "typescript", "bin", "tsc"), "2219f428a7e55aaf1f7ad85b9b0f0cf5078aeb76ccc9a7c6036c92d48f492ffd");
 requireHash(path.join(installRoot, "node_modules", "typescript5", "package.json"), "822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6");
@@ -169,7 +171,14 @@ try {
   );
 
   const applyParent = path.dirname(staging);
-  for (const patch of [runtimePatch, scriptcPatch, scriptcWindowsCleanupPatch, scriptcWindowsMsvcPatch]) {
+  const patches = [
+    runtimePatch,
+    scriptcPatch,
+    scriptcWindowsCleanupPatch,
+    scriptcWindowsMsvcPatch,
+    scriptcWindowsTimePatch,
+  ];
+  for (const patch of patches) {
     const gitEnvironment = { GIT_CEILING_DIRECTORIES: applyParent };
     const gitApply = ["-c", "core.autocrlf=false", "-c", "core.eol=lf", "apply", "--no-index"];
     run("git", [...gitApply, "--check", patch], { cwd: staging, env: gitEnvironment });
@@ -187,8 +196,17 @@ try {
   );
   requireHash(
     path.join(packages, "@scriptc", "runtime", "src", "scr_runtime.h"),
-    "618efa25c27a15d2f6d76eae16077eb403f58d65e39f6c57b08e6e324ed82c23",
+    "45947ace076b2ea8beb32064e2c357a71b05caf9bf8a18e73c70ec9e4dc84cbe",
   );
+  requireHash(
+    path.join(packages, "@scriptc", "runtime", "src", "scr_win.c"),
+    "e32c7aae5c69e0b30cdaf5b434716d51c4475b7bb66def3a6ddb05080f6ed6fe",
+  );
+  if (process.platform === "win32") {
+    run(process.execPath, [path.join(frameworkRoot, "scripts", "test-scriptc-windows-time.mjs"), staging], {
+      env: { NATIVE_ZIG: process.env.NATIVE_ZIG ?? "zig" },
+    });
+  }
   run(process.execPath, [
     path.join(frameworkRoot, "scripts", "test-native-sdk-scriptc-integer-provenance.mjs"),
     pathToFileURL(patchedIntInfer).href,
@@ -205,7 +223,7 @@ try {
     sourceTreeSha256: sourceTreeSha256(source),
     host: "windows-x64",
     publishedPayloadTreeSha256,
-    patches: [runtimePatch, scriptcPatch, scriptcWindowsCleanupPatch, scriptcWindowsMsvcPatch].map((file) => ({ path: path.basename(file), sha256: sha256File(file) })),
+    patches: patches.map((file) => ({ path: path.basename(file), sha256: sha256File(file) })),
   }, null, 2)}\n`);
   if (payloadTreeSha256(staging) !== publishedPayloadTreeSha256) throw new Error("published payload tree hash drifted");
   makeFilesReadOnly(staging);
