@@ -167,13 +167,15 @@ try {
   const applyParent = path.dirname(staging);
   for (const patch of [runtimePatch, scriptcPatch]) {
     const gitEnvironment = { GIT_CEILING_DIRECTORIES: applyParent };
-    run("git", ["apply", "--no-index", "--check", patch], { cwd: staging, env: gitEnvironment });
-    run("git", ["apply", "--no-index", patch], { cwd: staging, env: gitEnvironment });
+    const gitApply = ["-c", "core.autocrlf=false", "-c", "core.eol=lf", "apply", "--no-index"];
+    run("git", [...gitApply, "--check", patch], { cwd: staging, env: gitEnvironment });
+    run("git", [...gitApply, patch], { cwd: staging, env: gitEnvironment });
   }
 
   const patchedIntInfer = path.join(packages, "@scriptc", "compiler", "dist", "library", "int-infer.js");
-  if (sha256File(patchedIntInfer) !== "23dbcdc070f122d897cad6042ec79025e4292e89eab5b01e4d2b00badf839143") {
-    throw new Error("patched ScriptC integer provenance hash drifted");
+  const patchedIntInferSha256 = sha256File(patchedIntInfer);
+  if (patchedIntInferSha256 !== "23dbcdc070f122d897cad6042ec79025e4292e89eab5b01e4d2b00badf839143") {
+    throw new Error(`patched ScriptC integer provenance hash drifted: ${patchedIntInferSha256}`);
   }
   run(process.execPath, [path.join(frameworkRoot, "scripts", "test-native-sdk-scriptc-integer-provenance.mjs"), path.join(packages, "@scriptc", "compiler", "dist", "library", "int-infer.js")]);
   run(process.execPath, [path.join(frameworkRoot, "scripts", "test-native-sdk-external-core-unbound-roundtrip.mjs"), staging], {
