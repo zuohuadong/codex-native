@@ -40,6 +40,11 @@ try {
 #include <stdio.h>
 #include <string.h>
 
+static void stage(const char *name) {
+  fprintf(stderr, "[scriptc-dirent-stage] %s\n", name);
+  fflush(stderr);
+}
+
 static char *env_utf8(const wchar_t *name) {
   DWORD wide_len = GetEnvironmentVariableW(name, NULL, 0);
   if (wide_len == 0) return NULL;
@@ -56,11 +61,13 @@ static char *env_utf8(const wchar_t *name) {
 }
 
 int main(void) {
+  stage("read-environment");
   char *root = env_utf8(L"SCRIPTC_DIRENT_ROOT");
   char *junction = env_utf8(L"SCRIPTC_DIRENT_JUNCTION");
   char *file_path = env_utf8(L"SCRIPTC_DIRENT_FILE");
   char *missing = env_utf8(L"SCRIPTC_DIRENT_MISSING");
   if (!root || !junction || !file_path || !missing) return 10;
+  stage("open-root");
   DIR *dir = opendir(root);
   if (!dir) return 11;
   int alpha_regular = 0;
@@ -75,6 +82,7 @@ int main(void) {
   if (closedir(dir) != 0) return 12;
   if (!(alpha_regular && unicode_regular && nested_directory)) return 13;
 
+  stage("validate-errors");
   errno = 0;
   DIR *file = opendir(file_path);
   if (file != NULL || errno != ENOTDIR) return 14;
@@ -82,12 +90,14 @@ int main(void) {
   DIR *absent = opendir(missing);
   if (absent != NULL || errno != ENOENT) return 15;
 
+  stage("remove-junction");
   bool removed = true;
   const char *operation = NULL;
   if (scr_win_remove_reparse(root, strlen(root), &removed, &operation) != 0 || removed) return 16;
   if (scr_win_remove_reparse(junction, strlen(junction), &removed, &operation) != 0) return 17;
   if (!removed || strcmp(operation, "rmdir") != 0) return 18;
 
+  stage("force-enumeration-error");
   DIR *broken = opendir(root);
   int read_error = 0;
   if (!broken || scr_win_readdir_next(broken, &read_error) == NULL) return 19;
@@ -96,10 +106,12 @@ int main(void) {
   broken->handle = INVALID_HANDLE_VALUE;
   (void)closedir(broken);
 
+  stage("release-environment");
   free(root);
   free(junction);
   free(file_path);
   free(missing);
+  stage("complete");
   return 0;
 }
 `);
@@ -108,7 +120,8 @@ int main(void) {
   const compiler = process.env.SCRIPTC_HOST_CC ?? "clang";
   const compile = spawnSync(compiler, [
     "-std=c11",
-    "-O2",
+    "-O0",
+    "-g",
     "-I", runtime,
     source,
     "-o", executable,
