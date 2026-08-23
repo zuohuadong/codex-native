@@ -145,7 +145,7 @@ overlay_matches() {
   [ -f "$DEST/native-sdk-patch.json" ] || return 1
   runtime_hash=$(sha256_file "$RUNTIME_PATCH")
   scriptc_hash=$(sha256_file "$SCRIPTC_PATCH")
-  node - "$DEST/native-sdk-patch.json" "$runtime_hash" "$scriptc_hash" <<'NODE'
+  node - "$DEST/native-sdk-patch.json" "$runtime_hash" "$scriptc_hash" <<'NODE' || return 1
 const fs = require("fs");
 const [file, runtimeHash, scriptcHash] = process.argv.slice(2);
 try {
@@ -224,11 +224,10 @@ mkdir -p "$STAGING/packages/core/node_modules/$(dirname "$TS_PLATFORM_PACKAGE")"
 cp -R "$TS_PLATFORM_ROOT" "$STAGING/packages/core/node_modules/$TS_PLATFORM_PACKAGE"
 
 APPLY_PARENT=$(dirname "$STAGING")
-STAGING_REL=$(basename "$STAGING")
-(cd "$APPLY_PARENT" && git apply --no-index --check --directory="$STAGING_REL" "$RUNTIME_PATCH")
-(cd "$APPLY_PARENT" && git apply --no-index --directory="$STAGING_REL" "$RUNTIME_PATCH")
-(cd "$APPLY_PARENT" && git apply --no-index --check --directory="$STAGING_REL" "$SCRIPTC_PATCH")
-(cd "$APPLY_PARENT" && git apply --no-index --directory="$STAGING_REL" "$SCRIPTC_PATCH")
+(cd "$STAGING" && GIT_CEILING_DIRECTORIES="$APPLY_PARENT" git apply --no-index --check "$RUNTIME_PATCH")
+(cd "$STAGING" && GIT_CEILING_DIRECTORIES="$APPLY_PARENT" git apply --no-index "$RUNTIME_PATCH")
+(cd "$STAGING" && GIT_CEILING_DIRECTORIES="$APPLY_PARENT" git apply --no-index --check "$SCRIPTC_PATCH")
+(cd "$STAGING" && GIT_CEILING_DIRECTORIES="$APPLY_PARENT" git apply --no-index "$SCRIPTC_PATCH")
 ACTUAL_PATCHED_INT_INFER_SHA256=$(sha256_file "$STAGING/packages/core/node_modules/@scriptc/compiler/dist/library/int-infer.js")
 [ "$ACTUAL_PATCHED_INT_INFER_SHA256" = "$EXPECTED_PATCHED_INT_INFER_SHA256" ] ||
   die "patched int-infer hash drifted: expected $EXPECTED_PATCHED_INT_INFER_SHA256, got $ACTUAL_PATCHED_INT_INFER_SHA256"

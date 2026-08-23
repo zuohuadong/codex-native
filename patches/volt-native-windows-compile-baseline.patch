@@ -1,0 +1,277 @@
+diff --git a/native-ui/app.zon b/native-ui/app.zon
+index ed6e446..964b5a7 100644
+--- a/native-ui/app.zon
++++ b/native-ui/app.zon
+@@ -4,7 +4,7 @@
+     .display_name = "Volt",
+     .description = "Volt desktop application",
+     .version = "0.1.0",
+-    .platforms = .{"macos"},
++    .platforms = .{ "macos", "windows" },
+     .permissions = .{ "view", "command" },
+     .capabilities = .{ "native_views", "gpu_surfaces" },
+     .commands = .{
+@@ -20,12 +20,12 @@
+         .{ .id = "view.quick_chat.toggle", .title = "Toggle Quick Chat" },
+     },
+     .shortcuts = .{
+-        .{ .id = "session.new", .key = "n", .modifiers = .{ "primary" } },
+-        .{ .id = "composer.submit", .key = "enter", .modifiers = .{ "primary" } },
+-        .{ .id = "view.sidebar.toggle", .key = "b", .modifiers = .{ "primary" } },
++        .{ .id = "session.new", .key = "n", .modifiers = .{"primary"} },
++        .{ .id = "composer.submit", .key = "enter", .modifiers = .{"primary"} },
++        .{ .id = "view.sidebar.toggle", .key = "b", .modifiers = .{"primary"} },
+         .{ .id = "view.detail.toggle", .key = "b", .modifiers = .{ "primary", "option" } },
+-        .{ .id = "view.settings.toggle", .key = ",", .modifiers = .{ "primary" } },
+-        .{ .id = "view.terminal.toggle", .key = "`", .modifiers = .{ "control" } },
++        .{ .id = "view.settings.toggle", .key = ",", .modifiers = .{"primary"} },
++        .{ .id = "view.terminal.toggle", .key = "`", .modifiers = .{"control"} },
+         .{ .id = "view.diff.toggle", .key = "g", .modifiers = .{ "control", "shift" } },
+         // I-4 Quick Chat：Cmd+Shift+Space app-local shortcut。
+         // OS-global hotkey (Carbon RegisterEventHotKey) 需 SDK overlay 落地后替换。
+diff --git a/native-ui/build.zig b/native-ui/build.zig
+index 8e99ab8..2024576 100644
+--- a/native-ui/build.zig
++++ b/native-ui/build.zig
+@@ -1,8 +1,8 @@
+ //! Volt-owned Native SDK v0.9.5 build graph.
+ //!
+ //! The SDK still owns the complete standard app/test/run behavior through
+-//! `addAppArtifacts`; this file adds only the process-local Rust bootstrap
+-//! archive and the two Apple frameworks that its fixed C ABI calls.
++//! `addAppArtifacts`; this file adds the process-local Rust bootstrap archive
++//! and Apple frameworks only for the existing macOS authority path.
+ 
+ const std = @import("std");
+ const native_sdk = @import("native_sdk");
+@@ -12,7 +12,25 @@ pub fn build(b: *std.Build) void {
+         .name = "volt-native-poc",
+     });
+     const target = artifacts.exe.root_module.resolved_target.?.result;
+-    if (target.os.tag != .macos) @panic("Volt bootstrap currently supports only macOS");
++
++    switch (target.os.tag) {
++        .macos => addMacosBootstrap(b, artifacts, target),
++        .windows => validateWindowsTarget(target),
++        else => @panic("Volt currently supports only macOS and Windows build targets"),
++    }
++}
++
++fn validateWindowsTarget(target: std.Target) void {
++    if (target.cpu.arch != .x86_64 or target.abi != .msvc) {
++        @panic("Volt Windows compile baseline requires x86_64-windows-msvc");
++    }
++}
++
++fn addMacosBootstrap(
++    b: *std.Build,
++    artifacts: anytype,
++    target: std.Target,
++) void {
+     const sysroot = b.sysroot orelse @panic("Volt bootstrap requires a resolved macOS SDK sysroot");
+     const framework_path: std.Build.LazyPath = .{
+         .cwd_relative = b.pathJoin(&.{ sysroot, "System/Library/Frameworks" }),
+diff --git a/native-ui/bun.lock b/native-ui/bun.lock
+index 087b778..939c499 100644
+--- a/native-ui/bun.lock
++++ b/native-ui/bun.lock
+@@ -9,7 +9,6 @@
+       },
+       "devDependencies": {
+         "@native-sdk/cli": "0.9.5",
+-        "@native-sdk/cli-darwin-arm64": "0.9.5",
+         "@typescript/old": "npm:typescript@7.0.2",
+         "scriptc": "0.0.33",
+       },
+diff --git a/native-ui/package.json b/native-ui/package.json
+index 8081618..b7045e8 100644
+--- a/native-ui/package.json
++++ b/native-ui/package.json
+@@ -7,7 +7,6 @@
+   },
+   "devDependencies": {
+     "@native-sdk/cli": "0.9.5",
+-    "@native-sdk/cli-darwin-arm64": "0.9.5",
+     "@typescript/old": "npm:typescript@7.0.2",
+     "scriptc": "0.0.33"
+   },
+diff --git a/native-ui/src/host_calls_windows.zig b/native-ui/src/host_calls_windows.zig
+new file mode 100644
+index 0000000..b24e87b
+--- /dev/null
++++ b/native-ui/src/host_calls_windows.zig
+@@ -0,0 +1,130 @@
++const std = @import("std");
++const native_sdk = @import("native_sdk");
++
++pub const SurfaceKind = enum { code_diff, code_file, workspace_file, terminal };
++
++var synthetic_surface_replay_authorized = false;
++var synthetic_surface_replay_active = false;
++var surface_sink: ?*const fn (SurfaceKind, []const u8) bool = null;
++var task_boundary_sink: ?*const fn () void = null;
++var terminal_boundary_sink: ?*const fn () void = null;
++
++pub fn setSyntheticSurfaceReplayAuthorized(authorized: bool, replay_active: bool) void {
++    synthetic_surface_replay_authorized = authorized;
++    synthetic_surface_replay_active = authorized and replay_active;
++}
++
++pub fn syntheticSurfaceReplayAuthorized() bool {
++    return synthetic_surface_replay_authorized;
++}
++
++pub fn syntheticSurfaceReplayActive() bool {
++    return synthetic_surface_replay_authorized and synthetic_surface_replay_active;
++}
++
++pub fn applySyntheticReplayCodeCompletion(_: []const u8) ?bool {
++    return null;
++}
++
++pub fn beginSyntheticReplayCodeWrite(_: i64) bool {
++    return false;
++}
++
++pub fn beginSyntheticReplayCodeClose(_: i64) bool {
++    return false;
++}
++
++pub fn bindSurfaceSink(sink: *const fn (SurfaceKind, []const u8) bool) void {
++    surface_sink = sink;
++}
++
++pub fn bindTaskBoundarySink(sink: *const fn () void) void {
++    task_boundary_sink = sink;
++}
++
++pub fn bindTerminalBoundarySink(sink: *const fn () void) void {
++    terminal_boundary_sink = sink;
++}
++
++pub fn binding(effects: anytype) native_sdk.HostCallBinding {
++    const Effects = @TypeOf(effects.*);
++    const Callbacks = struct {
++        fn send(_: *anyopaque, _: []const u8, _: []const u8) void {}
++
++        fn request(context: *anyopaque, name: []const u8, key: u64, payload: []const u8) void {
++            const bound: *Effects = @ptrCast(@alignCast(context));
++            if (std.mem.eql(u8, name, "volt.bootstrap.status")) {
++                const failure = if (payload.len == 0) "bootstrap_unverified" else "invalid_bootstrap_request";
++                bound.feedHostResult(key, false, failure) catch {};
++                return;
++            }
++            bound.feedHostResult(key, false, "agentd_unbound") catch {};
++        }
++
++        fn cancel(_: *anyopaque, _: u64) void {}
++    };
++    return .{
++        .context = effects,
++        .send_fn = Callbacks.send,
++        .request_fn = Callbacks.request,
++        .cancel_fn = Callbacks.cancel,
++    };
++}
++
++pub fn poll(_: anytype) void {}
++
++pub fn deinit() void {
++    surface_sink = null;
++    task_boundary_sink = null;
++    terminal_boundary_sink = null;
++    synthetic_surface_replay_authorized = false;
++    synthetic_surface_replay_active = false;
++}
++
++pub fn testingDisconnectTransport() bool {
++    return false;
++}
++
++pub fn testingStageIndeterminateTerminalInput(_: u64) ?u64 {
++    return null;
++}
++
++pub fn testingReconnectState() [4]u64 {
++    return .{ 4, 0, 0, 0 };
++}
++
++test "Windows host requests fail closed until authority is bound" {
++    const FakeEffects = struct {
++        key: u64 = 0,
++        ok: bool = true,
++        result: [64]u8 = undefined,
++        result_len: usize = 0,
++
++        fn feedHostResult(self: *@This(), key: u64, ok: bool, bytes: []const u8) !void {
++            self.key = key;
++            self.ok = ok;
++            self.result_len = bytes.len;
++            @memcpy(self.result[0..bytes.len], bytes);
++        }
++
++        fn resultSlice(self: *const @This()) []const u8 {
++            return self.result[0..self.result_len];
++        }
++    };
++
++    var effects = FakeEffects{};
++    const bound = binding(&effects);
++
++    bound.request_fn(bound.context, "volt.bootstrap.status", 7, "");
++    try std.testing.expectEqual(@as(u64, 7), effects.key);
++    try std.testing.expect(!effects.ok);
++    try std.testing.expectEqualStrings("bootstrap_unverified", effects.resultSlice());
++
++    bound.request_fn(bound.context, "volt.bootstrap.status", 8, "unexpected");
++    try std.testing.expectEqualStrings("invalid_bootstrap_request", effects.resultSlice());
++
++    bound.request_fn(bound.context, "volt.task.start", 9, "{}");
++    try std.testing.expectEqual(@as(u64, 9), effects.key);
++    try std.testing.expect(!effects.ok);
++    try std.testing.expectEqualStrings("agentd_unbound", effects.resultSlice());
++}
+diff --git a/native-ui/src/surface_host.zig b/native-ui/src/surface_host.zig
+index 0d50ce2..295ec18 100644
+--- a/native-ui/src/surface_host.zig
++++ b/native-ui/src/surface_host.zig
+@@ -1,7 +1,11 @@
+ const std = @import("std");
++const builtin = @import("builtin");
+ const native_sdk = @import("native_sdk");
+ const code_surface = @import("code_surface.zig");
+-const host_calls = @import("host_calls.zig");
++const host_calls = if (builtin.os.tag == .windows)
++    @import("host_calls_windows.zig")
++else
++    @import("host_calls.zig");
+ const terminal_surface = @import("terminal_surface.zig");
+ const provider_secret_field = @import("provider_secret_field.zig");
+ 
+diff --git a/native-ui/src/ts_host.zig b/native-ui/src/ts_host.zig
+index 4470bdd..b5885fb 100644
+--- a/native-ui/src/ts_host.zig
++++ b/native-ui/src/ts_host.zig
+@@ -1,10 +1,14 @@
+ const std = @import("std");
++const builtin = @import("builtin");
+ const native_sdk = @import("native_sdk");
+ const app_icons = @import("app_icons.zig");
+ const codex_theme = @import("codex_theme.zig");
+ const visual_components = @import("codex_visual_components.zig");
+ const surface_host = @import("surface_host.zig");
+-const host_calls = @import("host_calls.zig");
++const host_calls = if (builtin.os.tag == .windows)
++    @import("host_calls_windows.zig")
++else
++    @import("host_calls.zig");
+ 
+ /// App-local visual extension for the generated TypeScript Core wiring.
+ /// It owns no Model, Msg, reducer, route, or business state; it only maps
+@@ -183,5 +187,5 @@ test {
+     _ = @import("code_surface.zig");
+     _ = @import("terminal_surface.zig");
+     _ = @import("provider_secret_field.zig");
+-    _ = @import("host_calls.zig");
++    _ = host_calls;
+ }
