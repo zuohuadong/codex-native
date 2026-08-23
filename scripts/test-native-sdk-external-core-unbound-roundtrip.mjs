@@ -34,8 +34,12 @@ const sdk = path.resolve(process.argv[2] ?? "");
 if (!process.argv[2] || !fs.existsSync(path.join(sdk, "tools/corewire/main.zig"))) {
   fail("usage: test-native-sdk-external-core-unbound-roundtrip.mjs <patched-sdk-path>");
 }
-const zig = process.env.NATIVE_ZIG ?? path.join(os.homedir(), ".native/toolchains/zig-0.16.0/zig");
-if (!fs.existsSync(zig)) fail(`missing Zig 0.16 toolchain: ${zig}`);
+const zig = process.env.NATIVE_ZIG ?? "zig";
+const zigVersion = spawnSync(zig, ["version"], { encoding: "utf8", stdio: "pipe" });
+if (zigVersion.status !== 0) fail(`missing Zig 0.16 toolchain: ${zig}`);
+if (!zigVersion.stdout.trim().startsWith("0.16.")) {
+  fail(`expected Zig 0.16, got ${zigVersion.stdout.trim() || "unknown"}`);
+}
 
 const baseSidecar = {
   format: 1,
