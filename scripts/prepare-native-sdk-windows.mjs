@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const frameworkRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = path.resolve(process.env.VOLT_SOURCE_ROOT ?? "");
@@ -177,7 +177,10 @@ try {
   if (patchedIntInferSha256 !== "23dbcdc070f122d897cad6042ec79025e4292e89eab5b01e4d2b00badf839143") {
     throw new Error(`patched ScriptC integer provenance hash drifted: ${patchedIntInferSha256}`);
   }
-  run(process.execPath, [path.join(frameworkRoot, "scripts", "test-native-sdk-scriptc-integer-provenance.mjs"), path.join(packages, "@scriptc", "compiler", "dist", "library", "int-infer.js")]);
+  run(process.execPath, [
+    path.join(frameworkRoot, "scripts", "test-native-sdk-scriptc-integer-provenance.mjs"),
+    pathToFileURL(patchedIntInfer).href,
+  ]);
   run(process.execPath, [path.join(frameworkRoot, "scripts", "test-native-sdk-external-core-unbound-roundtrip.mjs"), staging], {
     env: { NATIVE_ZIG: process.env.NATIVE_ZIG ?? "zig" },
   });
