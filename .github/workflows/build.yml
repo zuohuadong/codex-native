@@ -137,6 +137,7 @@ jobs:
             --depth 1 `
             $env:SOURCE_REPOSITORY `
             $sourceDir
+          git -C $sourceDir config core.autocrlf false
           $sourceCommit = git -C $sourceDir rev-parse HEAD
           if ($sourceCommit -ne $env:SOURCE_EXPECTED_COMMIT) {
             throw "Expected source main $env:SOURCE_EXPECTED_COMMIT, got $sourceCommit"
