@@ -1,0 +1,686 @@
+diff --git a/packages/core/node_modules/@scriptc/compiler/dist/library/int-infer.js b/packages/core/node_modules/@scriptc/compiler/dist/library/int-infer.js
+index 91642bc..4dd0077 100644
+--- a/packages/core/node_modules/@scriptc/compiler/dist/library/int-infer.js
++++ b/packages/core/node_modules/@scriptc/compiler/dist/library/int-infer.js
+@@ -544,6 +544,50 @@ const STMT_KINDS = new Set([
+     "runtimeFence", "rethrow", "tryCatch",
+ ]);
+ const isStmtKind = (k) => STMT_KINDS.has(k);
++function noteImmutableGlobalWrite(globalCandidates, localId, rhs) {
++    const globalCandidate = globalCandidates.get(localId);
++    if (globalCandidate === undefined)
++        return;
++    if (rhs.kind !== "numLit") {
++        globalCandidate.safe = false;
++        return;
++    }
++    globalCandidate.range = join(globalCandidate.range, constVal(rhs.value, rhs.spelling));
++}
++function scanImmutableGlobalWrites(loweredNode, globalCandidates) {
++    if (Array.isArray(loweredNode)) {
++        loweredNode.forEach((child) => scanImmutableGlobalWrites(child, globalCandidates));
++        return;
++    }
++    if (loweredNode === null || typeof loweredNode !== "object")
++        return;
++    if (loweredNode.kind === "assign" || loweredNode.kind === "assignExpr")
++        noteImmutableGlobalWrite(globalCandidates, loweredNode.localId, loweredNode.value);
++    else if (loweredNode.kind === "incDec" && globalCandidates.has(loweredNode.localId))
++        globalCandidates.get(loweredNode.localId).safe = false;
++    for (const [key, child] of Object.entries(loweredNode)) {
++        if (key !== "type" && key !== "loc")
++            scanImmutableGlobalWrites(child, globalCandidates);
++    }
++}
++/** Module storage starts at zero before init, so every seed includes zero.
++ * Only immutable globals whose complete lowered write set is literal can
++ * keep a closed-world range; computed or mutable writes remain TOP. */
++function immutableGlobalSeeds(mod) {
++    const globalCandidates = new Map();
++    for (const global of mod.globals ?? []) {
++        if (global.mutable === false && numberCarrierKind(global.type, mod) !== null)
++            globalCandidates.set(global.id, { range: constVal(0), safe: true });
++    }
++    for (const fn of mod.functions)
++        scanImmutableGlobalWrites(fn.body, globalCandidates);
++    const seeds = new Map();
++    for (const [id, globalCandidate] of globalCandidates) {
++        if (globalCandidate.safe)
++            seeds.set(id, globalCandidate.range);
++    }
++    return seeds;
++}
+ /* ── the analyzer ──────────────────────────────────────────────────────── */
+ const WIDEN_AFTER = 3; // plain joins at a loop header before widening
+ const LOOP_CAP = 64; // hard bound; thresholds converge far earlier
+@@ -551,6 +595,9 @@ const NEGATE = { "<": ">=", "<=": ">", ">": "<=", ">=": "<", "===": "!==", "!=="
+ const FLIP = { "<": ">", "<=": ">=", ">": "<", ">=": "<=", "===": "===", "!==": "!==" };
+ const CMP_OPS = new Set(["<", "<=", ">", ">=", "===", "!=="]);
+ const ORDERED_CMP_OPS = new Set(["<", "<=", ">", ">="]);
++// These predicates are pure and carry explicit numeric facts on the branch
++// where JavaScript says the classification succeeded.
++const NUMBER_CLASSIFIERS = new Set(["number.isFinite", "number.isNaN", "number.isInteger", "number.isSafeInteger"]);
+ /** Meet a value with an interval; `clearNaN` when the comparison's truth
+  * on this edge excludes NaN operands. */
+ function meetInterval(v, lo, hi, clearNaN) {
+@@ -582,8 +629,10 @@ function refineLhs(op, a, b, clearNaN) {
+             return meetInterval(a, a.whole ? Math.floor(b.lo) + 1 : b.lo, Infinity, clearNaN);
+         case ">=":
+             return meetInterval(a, a.whole ? Math.ceil(b.lo) : b.lo, Infinity, clearNaN);
+-        case "===":
+-            return meetInterval(a, b.lo, b.hi, clearNaN);
++        case "===": {
++            const met = meetInterval(a, b.lo, b.hi, clearNaN);
++            return absVal(met.lo, met.hi, met.whole || b.whole, met.maybeNaN, met.spelling);
++        }
+         case "!==": {
+             // Only endpoint exclusion is useful: whole x !== integer singleton k
+             // sitting on an endpoint of x's interval.
+@@ -604,19 +653,30 @@ class FnAnalyzer {
+     cfg;
+     effects;
+     verdicts;
++    summaries;
++    collect;
++    calls = [];
++    recordWrites = [];
++    returnValue = { ...BOTTOM };
+     frames = [];
+-    collect = false;
+     /** Return-site abstract values (for the declared-return check). */
+-    constructor(mod, cfg, effects, verdicts) {
++    constructor(mod, cfg, effects, verdicts, summaries = null, collect = true) {
+         this.mod = mod;
+         this.cfg = cfg;
+         this.effects = effects;
+         this.verdicts = verdicts;
++        this.summaries = summaries;
++        this.collect = collect;
+     }
+     analyze(fn) {
+         const env = new Map();
++        this.restoreKnownGlobals(env);
+         const slots = this.cfg.fns.get(fn.name);
++        const exportedParams = this.summaries?.exportedParams.get(fn.name);
++        const externallyCallable = fn.name === this.mod.entry || exportedParams !== undefined;
+         fn.params.forEach((p, i) => {
++            if (externallyCallable || this.summaries?.addressTaken.has(fn.name) === true)
++                this.taintType(p.type);
+             if (!this.bindingCarriesNumber(p.localId))
+                 return;
+             const declared = slots?.params[i] ?? null;
+@@ -625,10 +685,18 @@ class FnAnalyzer {
+                 env.set(p.localId, classSeed(declared));
+             else if (seed !== null)
+                 env.set(p.localId, { ...seed });
+-            else
++            else if (exportedParams?.[i] === "f64")
+                 env.set(p.localId, { ...TOP });
++            else if (fn.name === this.mod.entry)
++                env.set(p.localId, { ...TOP });
++            else if (this.summaries?.addressTaken.has(fn.name)) {
++                const trusted = this.summaries.trustedCallbackParams.get(fn.name)?.[i];
++                const direct = this.summaries.params.get(fn.name)?.[i] ?? BOTTOM;
++                env.set(p.localId, trusted === undefined ? { ...TOP } : join(trusted, direct));
++            }
++            else
++                env.set(p.localId, { ...(this.summaries?.params.get(fn.name)?.[i] ?? BOTTOM) });
+         });
+-        this.collect = true;
+         this.retSlot = slots !== undefined && slots.ret !== null ? { cls: slots.ret, path: slots.retPath } : null;
+         this.execStmts(fn.body, env);
+     }
+@@ -753,6 +821,8 @@ class FnAnalyzer {
+             case "recordSet": {
+                 this.evalExpr(s.obj, env);
+                 const v = this.evalExpr(s.value, env);
++                if (numberCarrierKind(s.value.type, this.mod) !== null)
++                    this.recordWrites.push({ shapeId: s.shapeId, field: s.field, value: v });
+                 const slot = this.cfg.records.get(s.shapeId)?.get(s.field);
+                 if (slot !== undefined)
+                     this.emitRecordSlot(v, slot, s.loc);
+@@ -766,6 +836,13 @@ class FnAnalyzer {
+                 this.evalExpr(s.obj, env);
+                 this.evalExpr(s.key, env);
+                 const v = this.evalExpr(s.value, env);
++                if (numberCarrierKind(s.value.type, this.mod) !== null && s.overflowOnly !== true) {
++                    const shape = this.mod.records?.find((candidate) => candidate.id === s.shapeId);
++                    for (const field of shape?.fields ?? []) {
++                        if (numberCarrierKind(field.type, this.mod) !== null)
++                            this.recordWrites.push({ shapeId: s.shapeId, field: field.name, value: v });
++                    }
++                }
+                 // A runtime key can dispatch to any declared field of the shape.
+                 // overflowOnly proves a literal key names no declared field; every
+                 // other keyed write must therefore discharge every integer slot it
+@@ -787,6 +864,8 @@ class FnAnalyzer {
+             case "return": {
+                 if (s.value !== null) {
+                     const v = this.evalExpr(s.value, env);
++                    if (numberCarrierKind(s.value.type, this.mod) !== null)
++                        this.returnValue = join(this.returnValue, v);
+                     if (this.retSlot !== null)
+                         this.emit(v, this.retSlot.path, this.retSlot.cls, s.loc);
+                 }
+@@ -920,8 +999,9 @@ class FnAnalyzer {
+         // Globals: any callee may have written before the throw.
+         for (const k of [...out.keys()]) {
+             if (isGlobalId(k))
+-                out.delete(k); // absent global = TOP
++                this.resetGlobal(out, k);
+         }
++        this.restoreKnownGlobals(out);
+         clearPathFacts(out);
+         return out;
+     }
+@@ -1064,6 +1144,35 @@ class FnAnalyzer {
+                 }
+                 return env;
+             }
++            case "libCall": {
++                if (!NUMBER_CLASSIFIERS.has(cond.fn) || cond.args.length !== 1 || !this.isPure(cond.args[0]))
++                    return env;
++                const arg = cond.args[0];
++                const key = this.refinementKey(arg, allowPaths);
++                if (key === null)
++                    return env;
++                const value = this.evalPure(arg, env);
++                let refined = value;
++                if (cond.fn === "number.isNaN") {
++                    refined = branch
++                        ? { ...BOTTOM, maybeNaN: value.maybeNaN }
++                        : { ...value, maybeNaN: false };
++                }
++                else if (branch && cond.fn === "number.isFinite") {
++                    refined = meetInterval(value, -Number.MAX_VALUE, Number.MAX_VALUE, true);
++                }
++                else if (branch && cond.fn === "number.isInteger") {
++                    const finite = meetInterval(value, -Number.MAX_VALUE, Number.MAX_VALUE, true);
++                    refined = absVal(finite.lo, finite.hi, true, false, finite.spelling);
++                }
++                else if (branch && cond.fn === "number.isSafeInteger") {
++                    const safe = meetInterval(value, SAFE_MIN, SAFE_MAX, true);
++                    refined = absVal(safe.lo, safe.hi, true, false, safe.spelling);
++                }
++                const out = cloneEnv(env);
++                out.set(key, refined);
++                return out;
++            }
+             case "bin": {
+                 if (!CMP_OPS.has(cond.op))
+                     return env;
+@@ -1136,7 +1245,7 @@ class FnAnalyzer {
+             case "awaitUnionExpr":
+                 return false;
+             case "libCall":
+-                return e.fn.startsWith("math.") && e.args.every((a) => this.isPure(a));
++                return (e.fn.startsWith("math.") || NUMBER_CLASSIFIERS.has(e.fn)) && e.args.every((a) => this.isPure(a));
+             case "numLit":
+             case "strLit":
+             case "boolLit":
+@@ -1147,6 +1256,10 @@ class FnAnalyzer {
+             case "recordGet":
+             case "fieldGet":
+                 return this.staticAccessPath(e) !== null;
++            case "arrIntrinsic":
++            case "bytesIntrinsic":
++            case "strIntrinsic":
++                return e.method === "length" && this.isPure(e.receiver);
+             case "unionNarrow":
+                 return this.isPure(e.value);
+             case "bin":
+@@ -1175,7 +1288,10 @@ class FnAnalyzer {
+                 if (numberCarrierKind(e.type, this.mod) === null)
+                     return { ...TOP };
+                 const key = this.pathKey(e, slot?.cls ?? null);
+-                return key === null ? (slot === undefined ? { ...TOP } : classSeed(slot.cls)) : envGet(env, key);
++                const fallback = slot === undefined
++                    ? (this.summaries?.records.get(e.shapeId)?.get(e.field) ?? TOP)
++                    : classSeed(slot.cls);
++                return key === null ? { ...fallback } : (env.has(key) ? envGet(env, key) : { ...fallback });
+             }
+             case "fieldGet": {
+                 if (numberCarrierKind(e.type, this.mod) === null)
+@@ -1197,6 +1313,11 @@ class FnAnalyzer {
+                 return transferBin(e.op, this.evalPure(e.left, env), this.evalPure(e.right, env));
+             case "libCall":
+                 return this.evalMath(e, env, false) ?? { ...TOP };
++            case "arrIntrinsic":
++                return e.method === "length" ? classSeed("u32") : { ...TOP };
++            case "bytesIntrinsic":
++            case "strIntrinsic":
++                return e.method === "length" ? classSeed("u64") : { ...TOP };
+             default:
+                 return { ...TOP };
+         }
+@@ -1274,6 +1395,8 @@ class FnAnalyzer {
+                 return this.stablePathGuard(e.value);
+             case "unionNarrow":
+                 return this.stablePathGuard(e.value);
++            case "libCall":
++                return NUMBER_CLASSIFIERS.has(e.fn) && e.args.every((arg) => this.stablePathGuard(arg));
+             case "bin":
+             case "strEq":
+             case "strCmp":
+@@ -1431,6 +1554,9 @@ class FnAnalyzer {
+                 // are exactly what the call passes (a later argument's side
+                 // effect cannot reach an earlier argument's already-read value).
+                 const vals = e.args.map((a) => this.evalExpr(a, env));
++                this.calls.push({ callee: e.callee, vals });
++                if (!this.summaries?.functions.has(e.callee))
++                    this.taintType(e.type);
+                 const slots = this.cfg.fns.get(e.callee);
+                 if (slots !== undefined) {
+                     e.args.forEach((arg, i) => {
+@@ -1443,7 +1569,7 @@ class FnAnalyzer {
+                 this.havocCall(e.callee, env);
+                 if (slots?.ret != null)
+                     return classSeed(slots.ret);
+-                return { ...TOP };
++                return { ...(this.summaries?.returns.get(e.callee) ?? TOP) };
+             }
+             case "unionWrap": {
+                 const value = this.evalExpr(e.value, env);
+@@ -1460,6 +1586,11 @@ class FnAnalyzer {
+                     : { ...TOP };
+             }
+             case "libCall": {
++                if (NUMBER_CLASSIFIERS.has(e.fn)) {
++                    for (const arg of e.args)
++                        this.evalExpr(arg, env);
++                    return { ...TOP };
++                }
+                 const math = this.evalMath(e, env, true);
+                 if (math !== null) {
+                     clearPathFacts(env);
+@@ -1469,6 +1600,7 @@ class FnAnalyzer {
+                     this.evalExpr(a, env);
+                 if (e.args.some((a) => typeContainsFunc(a.type)))
+                     this.havocAllGlobals(env);
++                this.taintType(e.type);
+                 clearPathFacts(env);
+                 return { ...TOP };
+             }
+@@ -1479,8 +1611,11 @@ class FnAnalyzer {
+             case "virtualCall":
+             case "new":
+             case "intrinsic": {
+-                for (const v of childExprs(e))
++                for (const v of childExprs(e)) {
+                     this.evalExpr(v, env);
++                    this.taintType(v.type);
++                }
++                this.taintType(e.type);
+                 this.havocAllGlobals(env);
+                 return { ...TOP };
+             }
+@@ -1488,15 +1623,27 @@ class FnAnalyzer {
+             case "yieldExpr":
+             case "awaitExpr":
+             case "awaitUnionExpr": {
+-                for (const v of childExprs(e))
++                for (const v of childExprs(e)) {
+                     this.evalExpr(v, env);
++                    this.taintType(v.type);
++                }
++                this.taintType(e.type);
+                 clearPathFacts(env);
+                 return { ...TOP };
+             }
++            case "arrayLit":
++            case "arrayNewLen":
++            case "arrayGet": {
++                for (const v of childExprs(e))
++                    this.evalExpr(v, env);
++                return { ...TOP };
++            }
+             case "recordLit": {
+                 const slotMap = this.cfg.records.get(e.type.shapeId);
+                 for (const f of e.fields) {
+                     const v = this.evalExpr(f.value, env);
++                    if (numberCarrierKind(f.value.type, this.mod) !== null)
++                        this.recordWrites.push({ shapeId: e.type.shapeId, field: f.name, value: v });
+                     const slot = slotMap?.get(f.name);
+                     if (slot !== undefined && numberCarrierKind(f.value.type, this.mod) !== null) {
+                         this.emitRecordSlot(v, slot, f.value.loc);
+@@ -1504,6 +1651,46 @@ class FnAnalyzer {
+                 }
+                 return { ...TOP };
+             }
++            case "arrIntrinsic": {
++                this.evalExpr(e.receiver, env);
++                for (const arg of e.args)
++                    this.evalExpr(arg, env);
++                if (e.method === "length" || e.method === "push" || e.method === "pushSpread") {
++                    if (e.method !== "length")
++                        clearPathFacts(env);
++                    return classSeed("u32");
++                }
++                if (e.method === "indexOf")
++                    return absVal(-1, 2 ** 32 - 2, true, false);
++                return { ...TOP };
++            }
++            case "bytesIntrinsic": {
++                this.evalExpr(e.receiver, env);
++                for (const arg of e.args)
++                    this.evalExpr(arg, env);
++                if (e.method === "length" || e.method === "byteLength" || e.method === "byteOffset")
++                    return classSeed("u64");
++                if (e.method === "get") {
++                    const elem = e.receiver.type.kind === "bytes" ? e.receiver.type.elem : null;
++                    if (elem === "u8")
++                        return classSeed("u8");
++                    if (elem === "u32")
++                        return classSeed("u32");
++                    if (elem === "i32")
++                        return classSeed("i32");
++                }
++                return { ...TOP };
++            }
++            case "strIntrinsic": {
++                this.evalExpr(e.receiver, env);
++                for (const arg of e.args)
++                    this.evalExpr(arg, env);
++                if (e.method === "length")
++                    return classSeed("u64");
++                if (e.method === "indexOf")
++                    return absVal(-1, SAFE_MAX, true, false);
++                return { ...TOP };
++            }
+             case "recordGet": {
+                 // A declared record-field slot is an assumption on the read side,
+                 // exactly like a declared parameter inside its callee: every write
+@@ -1514,7 +1701,10 @@ class FnAnalyzer {
+                 const slot = this.cfg.records.get(e.shapeId)?.get(e.field);
+                 if (numberCarrierKind(e.type, this.mod) !== null) {
+                     const key = this.pathKey(e, slot?.cls ?? null);
+-                    return key === null ? (slot === undefined ? { ...TOP } : classSeed(slot.cls)) : envGet(env, key);
++                    const fallback = slot === undefined
++                        ? (this.summaries?.records.get(e.shapeId)?.get(e.field) ?? TOP)
++                        : classSeed(slot.cls);
++                    return key === null ? { ...fallback } : (env.has(key) ? envGet(env, key) : { ...fallback });
+                 }
+                 return { ...TOP };
+             }
+@@ -1543,7 +1733,41 @@ class FnAnalyzer {
+             return;
+         }
+         for (const g of this.effects.perFn.get(callee))
+-            env.delete(g); // absent global = TOP
++            this.resetGlobal(env, g);
++    }
++    taintType(type, seen = new Set()) {
++        // A composite value from an external or dynamically dispatched source
++        // must not inherit optimistic facts collected from internal literals.
++        if (type.kind === "record") {
++            if (seen.has(type.shapeId))
++                return;
++            seen.add(type.shapeId);
++            const shape = this.mod.records?.find((candidate) => candidate.id === type.shapeId);
++            for (const field of shape?.fields ?? []) {
++                if (numberCarrierKind(field.type, this.mod) !== null)
++                    this.recordWrites.push({ shapeId: type.shapeId, field: field.name, value: { ...TOP } });
++                else
++                    this.taintType(field.type, seen);
++            }
++            return;
++        }
++        if (type.kind === "union") {
++            const union = this.mod.unions?.find((candidate) => candidate.id === type.unionId);
++            for (const arm of union?.arms ?? [])
++                this.taintType(arm, seen);
++            return;
++        }
++        for (const child of Object.values(type)) {
++            if (Array.isArray(child)) {
++                for (const item of child) {
++                    if (item !== null && typeof item === "object" && typeof item.kind === "string")
++                        this.taintType(item, seen);
++                }
++            }
++            else if (child !== null && typeof child === "object" && typeof child.kind === "string") {
++                this.taintType(child, seen);
++            }
++        }
+     }
+     havocAllGlobals(env) {
+         clearPathFacts(env);
+@@ -1551,6 +1775,18 @@ class FnAnalyzer {
+             if (isGlobalId(k))
+                 env.delete(k);
+         }
++        this.restoreKnownGlobals(env);
++    }
++    resetGlobal(env, id) {
++        const seed = this.summaries?.globalSeeds.get(id);
++        if (seed === undefined)
++            env.delete(id); // absent global = TOP
++        else
++            env.set(id, { ...seed });
++    }
++    restoreKnownGlobals(env) {
++        for (const [id, seed] of this.summaries?.globalSeeds ?? [])
++            env.set(id, { ...seed });
+     }
+ }
+ function cloneEnv(env) {
+@@ -1595,6 +1831,106 @@ function childExprs(e) {
+     }
+     return out;
+ }
++function addressTakenFunctions(mod) {
++    // Direct-call summaries are closed-world. Functions that become runtime
++    // values retain the pre-summary TOP parameter seed unless a future pass
++    // grows a sound closure-target analysis.
++    const out = new Set();
++    const visit = (value) => {
++        if (Array.isArray(value)) {
++            value.forEach(visit);
++            return;
++        }
++        if (value === null || typeof value !== "object")
++            return;
++        if (value.kind === "closure")
++            out.add(value.fnName);
++        for (const [key, child] of Object.entries(value)) {
++            if (key !== "type" && key !== "loc")
++                visit(child);
++        }
++    };
++    for (const fn of mod.functions)
++        visit(fn.body);
++    return out;
++}
++/** A lifted closure used exclusively as the callback argument of a closed-
++ * world synthetic Array HOF receives its index from the helper's guarded
++ * `[0, length)` loop. Preserve only that u32 provenance. Any other use of
++ * the closure (storage, return, external callback registration, or a
++ * generic call-value path) invalidates the exception and keeps TOP. */
++function trustedArrayHofCallbackParams(mod) {
++    const safe = new Map();
++    const unsafe = new Set();
++    const helper = /^%arr\.(?:map|filter|forEach|find|findIndex|findLast|findLastIndex|some|every)\./;
++    const visit = (value, parent = null, key = null, index = -1) => {
++        if (Array.isArray(value)) {
++            value.forEach((item, i) => visit(item, parent, key, i));
++            return;
++        }
++        if (value === null || typeof value !== "object")
++            return;
++        if (value.kind === "closure") {
++            const trusted = parent?.kind === "call" && key === "args" && index === 1 && helper.test(parent.callee);
++            if (!trusted) {
++                unsafe.add(value.fnName);
++            }
++            else {
++                const seeds = safe.get(value.fnName) ?? [];
++                const arity = value.type.kind === "func" ? value.type.params.length : 0;
++                while (seeds.length < arity)
++                    seeds.push({ ...TOP });
++                if (arity > 1)
++                    seeds[1] = classSeed("u32");
++                safe.set(value.fnName, seeds);
++            }
++        }
++        for (const [childKey, child] of Object.entries(value)) {
++            if (childKey === "type" || childKey === "loc")
++                continue;
++            if (Array.isArray(child))
++                child.forEach((item, childIndex) => visit(item, value, childKey, childIndex));
++            else
++                visit(child, value, childKey, -1);
++        }
++    };
++    for (const fn of mod.functions)
++        visit(fn.body);
++    for (const fnName of unsafe)
++        safe.delete(fnName);
++    return safe;
++}
++function summaryDependencies(mod) {
++    const callers = new Map();
++    const recordReaders = new Map();
++    const add = (map, key, fnName) => {
++        let values = map.get(key);
++        if (values === undefined) {
++            values = new Set();
++            map.set(key, values);
++        }
++        values.add(fnName);
++    };
++    const visit = (value, fnName) => {
++        if (Array.isArray(value)) {
++            value.forEach((item) => visit(item, fnName));
++            return;
++        }
++        if (value === null || typeof value !== "object")
++            return;
++        if (value.kind === "call")
++            add(callers, value.callee, fnName);
++        if (value.kind === "recordGet" && numberCarrierKind(value.type, mod) !== null)
++            add(recordReaders, `${value.shapeId}\0${value.field}`, fnName);
++        for (const [key, child] of Object.entries(value)) {
++            if (key !== "type" && key !== "loc")
++                visit(child, fnName);
++        }
++    };
++    for (const fn of mod.functions)
++        visit(fn.body, fn.name);
++    return { callers, recordReaders };
++}
+ /* ── the entry point ───────────────────────────────────────────────────── */
+ /** Run the inference over every function of a lowered library module and
+  * return one verdict per (obligation site) — internal call arguments into
+@@ -1606,11 +1942,109 @@ export function checkLibraryIntegerSlots(mod, cfg) {
+     if (!hasIntSlots(cfg))
+         return verdicts;
+     const effects = globalEffectsOf(mod);
++    const globalSeeds = immutableGlobalSeeds(mod);
++    const functions = new Map(mod.functions.map((fn) => [fn.name, fn]));
++    const exportedParams = new Map((mod.lib?.exports ?? []).map((entry) => [entry.fnName, entry.params]));
++    const addressTaken = addressTakenFunctions(mod);
++    const trustedCallbackParams = trustedArrayHofCallbackParams(mod);
++    const dependencies = summaryDependencies(mod);
++    let params = new Map(mod.functions.map((fn) => [fn.name, fn.params.map(() => ({ ...BOTTOM }))]));
++    let returns = new Map(mod.functions.map((fn) => [fn.name, { ...BOTTOM }]));
++    let records = new Map();
++    let converged = true;
++    const growths = new Map();
++    const queue = mod.functions.map((fn) => fn.name);
++    const queued = new Set(queue);
++    let head = 0;
++    let steps = 0;
++    const stepCap = Math.max(4096, mod.functions.length * 256);
++    const enqueue = (fnName) => {
++        if (!functions.has(fnName) || queued.has(fnName))
++            return;
++        queued.add(fnName);
++        queue.push(fnName);
++    };
++    const grow = (oldValue, candidate, key) => {
++        const joined = join(oldValue, candidate);
++        if (sameVal(oldValue, joined))
++            return oldValue;
++        const count = (growths.get(key) ?? 0) + 1;
++        growths.set(key, count);
++        return count > 3 ? widen(oldValue, joined) : joined;
++    };
++    // Propagate ordinary numeric parameters, returns and structural record
++    // fields together. Declared integer slots remain checked independently at
++    // every call/write boundary; these summaries only preserve provenance
++    // that the old per-function analysis discarded before reaching a slot.
++    while (head < queue.length) {
++        if (steps++ >= stepCap) {
++            converged = false;
++            break;
++        }
++        const fnName = queue[head++];
++        queued.delete(fnName);
++        const fn = functions.get(fnName);
++        if (fn === undefined)
++            continue;
++        const analyzer = new FnAnalyzer(mod, cfg, effects, [], { params, returns, records, addressTaken, trustedCallbackParams, functions, exportedParams, globalSeeds }, false);
++        analyzer.seedBindings(fn, mod);
++        analyzer.analyze(fn);
++        const oldReturn = returns.get(fnName) ?? BOTTOM;
++        const newReturn = grow(oldReturn, analyzer.returnValue, `return\0${fnName}`);
++        if (!sameVal(oldReturn, newReturn)) {
++            returns.set(fnName, newReturn);
++            for (const caller of dependencies.callers.get(fnName) ?? [])
++                enqueue(caller);
++        }
++        for (const write of analyzer.recordWrites) {
++            let fields = records.get(write.shapeId);
++            if (fields === undefined) {
++                fields = new Map();
++                records.set(write.shapeId, fields);
++            }
++            const oldValue = fields.get(write.field) ?? BOTTOM;
++            const fieldKey = `${write.shapeId}\0${write.field}`;
++            const newValue = grow(oldValue, write.value, `record\0${fieldKey}`);
++            if (!sameVal(oldValue, newValue)) {
++                fields.set(write.field, newValue);
++                for (const reader of dependencies.recordReaders.get(fieldKey) ?? [])
++                    enqueue(reader);
++            }
++        }
++        for (const call of analyzer.calls) {
++            const callee = functions.get(call.callee);
++            if (callee === undefined)
++                continue;
++            const seeds = params.get(call.callee) ?? callee.params.map(() => ({ ...BOTTOM }));
++            let changed = false;
++            for (let i = 0; i < call.vals.length && i < seeds.length; i++) {
++                const next = grow(seeds[i], call.vals[i], `param\0${call.callee}\0${i}`);
++                if (!sameVal(seeds[i], next)) {
++                    seeds[i] = next;
++                    changed = true;
++                }
++            }
++            params.set(call.callee, seeds);
++            if (changed)
++                enqueue(call.callee);
++        }
++    }
++    if (!converged) {
++        // Never accept an under-approximated summary when the safety cap is
++        // exhausted. TOP restores the original fail-closed behavior.
++        params = new Map(mod.functions.map((fn) => [fn.name, fn.params.map(() => ({ ...TOP }))]));
++        returns = new Map(mod.functions.map((fn) => [fn.name, { ...TOP }]));
++        records = new Map((mod.records ?? []).map((shape) => [
++            shape.id,
++            new Map(shape.fields
++                .filter((field) => numberCarrierKind(field.type, mod) !== null)
++                .map((field) => [field.name, { ...TOP }])),
++        ]));
++    }
+     for (const fn of mod.functions) {
+-        const analyzer = new FnAnalyzer(mod, cfg, effects, verdicts);
++        const analyzer = new FnAnalyzer(mod, cfg, effects, verdicts, { params, returns, records, addressTaken, trustedCallbackParams, functions, exportedParams, globalSeeds }, true);
+         analyzer.seedBindings(fn, mod);
+         analyzer.analyze(fn);
+     }
+     return verdicts;
+ }
+-//# sourceMappingURL=int-infer.js.map
+\ No newline at end of file

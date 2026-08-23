@@ -16,11 +16,14 @@ concurrency:
 env:
   SOURCE_REPOSITORY: https://cnb.cool/aizhuliren/volt-native
   SOURCE_REF: main
+  NODE_VERSION: "24"
 
 jobs:
   macos:
     name: macOS arm64
     runs-on: macos-15
+    env:
+      SOURCE_DIR: ${{ runner.temp }}/volt-native-source
     steps:
       - name: Checkout CI repository
         uses: actions/checkout@v5
@@ -36,24 +39,36 @@ jobs:
             --branch "$SOURCE_REF" \
             --depth 1 \
             "$SOURCE_REPOSITORY" \
-            source
-          git -C source rev-parse HEAD
-          rm -rf source/.git
+            "$SOURCE_DIR"
+          git -C "$SOURCE_DIR" rev-parse HEAD
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Install build dependencies
         shell: bash
         run: |
           set -euo pipefail
           brew install bun zig
-          cd source/native-ui
+          cd "$SOURCE_DIR/native-ui"
           bun install --frozen-lockfile
+
+      - name: Prepare patched Native SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          VOLT_SOURCE_ROOT="$SOURCE_DIR" \
+            VOLT_NATIVE_SDK_ALLOW_INVENTORY_PUBLISH=1 \
+            ./scripts/prepare-native-sdk.sh --print-path
 
       - name: Build macOS binary
         shell: bash
         run: |
           set -euo pipefail
-          cd source
-          VOLT_NATIVE_SDK_ALLOW_INVENTORY_PUBLISH=1 \
+          cd "$SOURCE_DIR"
+          VOLT_NATIVE_SDK_REQUIRE_REUSE=1 \
             ./scripts/native-patched.sh build native-ui --yes -Doptimize=ReleaseFast
           file native-ui/zig-out/bin/volt-native-poc
 
@@ -61,13 +76,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: volt-native-macos-arm64
-          path: source/native-ui/zig-out/bin/volt-native-poc
+          path: ${{ runner.temp }}/volt-native-source/native-ui/zig-out/bin/volt-native-poc
           if-no-files-found: error
           retention-days: 14
 
   windows:
     name: Windows x64
     runs-on: windows-2025
+    env:
+      SOURCE_DIR: ${{ runner.temp }}\volt-native-source
     steps:
       - name: Checkout CI repository
         uses: actions/checkout@v5
@@ -84,14 +101,14 @@ jobs:
             --branch $env:SOURCE_REF `
             --depth 1 `
             $env:SOURCE_REPOSITORY `
-            source
-          git -C source rev-parse HEAD
+            $env:SOURCE_DIR
+          git -C $env:SOURCE_DIR rev-parse HEAD
 
       - name: Verify Windows product support
         shell: pwsh
         run: |
-          $app = Get-Content source/native-ui/app.zon -Raw
-          $build = Get-Content source/native-ui/build.zig -Raw
+          $app = Get-Content "$env:SOURCE_DIR/native-ui/app.zon" -Raw
+          $build = Get-Content "$env:SOURCE_DIR/native-ui/build.zig" -Raw
           if ($app -notmatch '"windows"' -or $build -match 'supports only macOS') {
             throw "The source main branch does not yet support a complete Windows GUI build. Windows bootstrap, agentd authority, Codex runtime, and packaging must be ported before this job can produce an honest binary."
           }

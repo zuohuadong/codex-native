@@ -1,0 +1,3047 @@
+diff --git a/build/app.zig b/build/app.zig
+index 7590a9e..8216a52 100644
+--- a/build/app.zig
++++ b/build/app.zig
+@@ -365,6 +365,7 @@ const core_compiler_teaching =
+ /// links. Built once per app build and shared by the exe and test modules.
+ const TsCoreStage = struct {
+     main_root: std.Build.LazyPath,
++    host_root: std.Build.LazyPath,
+     /// The staged mobile wiring (ts_core_mobile.zig beside the same
+     /// mirror/registry files): the embed static library's `app`
+     /// module roots here on iOS/Android targets.
+@@ -1208,6 +1209,10 @@ fn tsCoreStage(
+     }
+     _ = staged.add("window_views.zig", tsWindowRegistrySource(b, window_views));
+     const main_root = staged.addCopyFile(dep.path("src/app_runner/ts_core_main.zig"), "main.zig");
++    const host_root = if (appFileExists(b, app_root, "src/ts_host.zig"))
++        b.path(appPath(b, app_root, "src/ts_host.zig"))
++    else
++        dep.path("src/app_runner/ts_host_default.zig");
+     // The mobile wiring stages beside the desktop entry: same mirror, same
+     // registry, same carrier constant — only the shell differs (the embed
+     // host's AppDef contract instead of a process `main`).
+@@ -1220,6 +1225,7 @@ fn tsCoreStage(
+         .service_archive = service_archive,
+         .markup_c = markup_c,
+         .migrations = migrations_zig,
++        .host_root = host_root,
+     };
+ }
+ 
+@@ -1723,6 +1729,23 @@ pub fn addAppArtifacts(b: *std.Build, dep: *std.Build.Dependency, app_options: A
+     const trace_option = b.option(TraceOption, "trace", "Trace output: off, events, runtime, all") orelse .events;
+     const debug_overlay = b.option(bool, "debug-overlay", "Enable debug overlay output") orelse false;
+     const automation_enabled = b.option(bool, "automation", "Enable Native SDK automation artifacts") orelse false;
++    const synthetic_code_surface_replay = b.option(bool, "synthetic-code-surface-replay", "Build a fixture-bound synthetic CodeSurface replay binary") orelse false;
++    const synthetic_code_surface_home = b.option([]const u8, "synthetic-code-surface-home", "Exact isolated HOME for the synthetic CodeSurface replay") orelse "";
++    const synthetic_code_surface_workspace = b.option([]const u8, "synthetic-code-surface-workspace", "Exact isolated workspace for the synthetic CodeSurface replay") orelse "";
++    const synthetic_code_surface_journal = b.option([]const u8, "synthetic-code-surface-journal", "Exact journal path for the synthetic CodeSurface replay") orelse "";
++    const synthetic_code_surface_visual_codex = b.option([]const u8, "synthetic-code-surface-visual-codex", "Exact synthetic visual fixture executable") orelse "";
++    if (synthetic_code_surface_replay and !automation_enabled) {
++        @panic("-Dsynthetic-code-surface-replay=true requires -Dautomation=true");
++    }
++    const synthetic_paths = [_][]const u8{ synthetic_code_surface_home, synthetic_code_surface_workspace, synthetic_code_surface_journal, synthetic_code_surface_visual_codex };
++    for (synthetic_paths) |path| {
++        if (synthetic_code_surface_replay and (path.len == 0 or !std.fs.path.isAbsolute(path))) {
++            @panic("synthetic CodeSurface replay requires four absolute fixture-bound paths");
++        }
++        if (!synthetic_code_surface_replay and path.len != 0) {
++            @panic("synthetic CodeSurface replay paths require -Dsynthetic-code-surface-replay=true");
++        }
++    }
+     const js_bridge_enabled = b.option(bool, "js-bridge", "Enable optional JavaScript bridge stubs") orelse false;
+     const web_engine_override = b.option(WebEngineOption, "web-engine", "Override app.zon web engine: system, chromium");
+     const web_layer_override = b.option(WebLayerOption, "web-layer", "Override app.zon webview_layer: auto, include, exclude");
+@@ -1761,6 +1784,11 @@ pub fn addAppArtifacts(b: *std.Build, dep: *std.Build.Dependency, app_options: A
+     options.addOption([]const u8, "web_engine", @tagName(web_engine));
+     options.addOption(bool, "debug_overlay", debug_overlay);
+     options.addOption(bool, "automation", automation_enabled);
++    options.addOption(bool, "synthetic_code_surface_replay", synthetic_code_surface_replay);
++    options.addOption([]const u8, "synthetic_code_surface_home", synthetic_code_surface_home);
++    options.addOption([]const u8, "synthetic_code_surface_workspace", synthetic_code_surface_workspace);
++    options.addOption([]const u8, "synthetic_code_surface_journal", synthetic_code_surface_journal);
++    options.addOption([]const u8, "synthetic_code_surface_visual_codex", synthetic_code_surface_visual_codex);
+     options.addOption(bool, "js_bridge", js_bridge_enabled);
+     options.addOption(bool, "web_layer", web_layer);
+     const options_mod = options.createModule();
+@@ -2050,6 +2078,7 @@ fn appModule(b: *std.Build, dep: *std.Build.Dependency, target: std.Build.Resolv
+         localModule(b, target, optimize, appPath(b, app_options.app_root, app_options.main));
+     app_mod.addImport("native_sdk", native_sdk_mod);
+     app_mod.addImport("runner", runner_mod);
++    app_mod.addImport("build_options", options_mod);
+     if (ts_stage != null) {
+         // The wiring derives scene/identity/security from app.zon itself.
+         app_mod.addImport("app_manifest_zon", manifest_mod);
+@@ -2062,6 +2091,14 @@ fn appModule(b: *std.Build, dep: *std.Build.Dependency, target: std.Build.Resolv
+         // The in-process service archive links beside it (distinct symbol
+         // prefix; its runtime internals are localized).
+         if (stage.service_archive) |service_archive| app_mod.addObjectFile(service_archive);
++        const host_mod = b.createModule(.{
++            .root_source_file = stage.host_root,
++            .target = target,
++            .optimize = optimize,
++        });
++        host_mod.addImport("native_sdk", native_sdk_mod);
++        host_mod.addImport("build_options", options_mod);
++        app_mod.addImport("ts_host", host_mod);
+     }
+     if (app_config.sqlite_capability) {
+         // `store` and the relational `sqlite` tier share this exact object.
+@@ -2449,8 +2486,8 @@ fn linkPlatform(b: *std.Build, dep: *std.Build.Dependency, target: std.Build.Res
+     if (platform == .macos) {
+         switch (web_engine) {
+             .system => {
+-                const sdk_include = if (b.sysroot) |sysroot| b.fmt("-I{s}/usr/include", .{sysroot}) else "";
+-                const flags: []const []const u8 = if (b.sysroot) |sysroot| &.{ "-fobjc-arc", "-fno-sanitize=builtin", "-ObjC", "-mmacosx-version-min=11.0", "-isysroot", sysroot, sdk_include } else &.{ "-fobjc-arc", "-fno-sanitize=builtin", "-ObjC", "-mmacosx-version-min=11.0" };
++                const sdk_include = if (b.sysroot) |sysroot| b.fmt("-isystem{s}/usr/include", .{sysroot}) else "";
++                const flags: []const []const u8 = if (b.sysroot) |sysroot| &.{ "-fobjc-arc", "-fno-sanitize=builtin", "-Wno-deprecated-declarations", "-ObjC", "-mmacosx-version-min=11.0", "-isysroot", sysroot, sdk_include } else &.{ "-fobjc-arc", "-fno-sanitize=builtin", "-Wno-deprecated-declarations", "-ObjC", "-mmacosx-version-min=11.0" };
+                 app_mod.addCSourceFile(.{ .file = dep.path("src/platform/macos/appkit_host.m"), .flags = flags });
+                 app_mod.linkFramework("WebKit", .{});
+             },
+@@ -2489,6 +2526,7 @@ fn linkPlatform(b: *std.Build, dep: *std.Build.Dependency, target: std.Build.Res
+         app_mod.linkFramework("Accelerate", .{});
+         app_mod.linkFramework("Foundation", .{});
+         app_mod.linkFramework("CoreText", .{});
++        app_mod.linkFramework("CoreGraphics", .{});
+         app_mod.linkFramework("UniformTypeIdentifiers", .{});
+         app_mod.linkFramework("Security", .{});
+         app_mod.linkFramework("Metal", .{});
+diff --git a/packages/core/compile-surface/core.ts b/packages/core/compile-surface/core.ts
+index e995756..603dcd0 100644
+--- a/packages/core/compile-surface/core.ts
++++ b/packages/core/compile-surface/core.ts
+@@ -549,8 +549,16 @@ export type CmdData =
+   | { readonly op: "pty_write"; readonly key: string; readonly bytes: Uint8Array }
+   | { readonly op: "pty_resize"; readonly key: string; readonly cols: number; readonly rows: number }
+   | { readonly op: "pty_kill"; readonly key: string }
++  | {
++      readonly op: "platform_feature";
++      readonly feature: PlatformFeature;
++      readonly verb: PlatformFeatureVerb;
++    }
+   | { readonly op: "batch"; readonly cmds: readonly CmdData[] };
+ 
++export type PlatformFeature = "shortcut_capture" | "global_hotkey" | "configure_shortcuts" | "screen_capture";
++export type PlatformFeatureVerb = "start" | "stop" | "register" | "unregister" | "apply";
++
+ export type Cmd<M extends Msgish> = CmdData;
+ 
+ /// The wire encoding of a host record payload — byte-identical to the
+@@ -686,7 +694,7 @@ export const Cmd = {
+ 
+   host: hostCmd,
+ 
+-  request(name: string, payload: Uint8Array, route: { readonly key?: string; readonly ok: string; readonly err: string }): CmdData {
++  request<M extends Msgish>(name: string, payload: Uint8Array, route: { readonly key?: string; readonly ok: string; readonly err: string }): CmdData {
+     return {
+       op: "request",
+       name,
+@@ -1069,7 +1077,11 @@ export const Cmd = {
+     return { op: "pty_kill", key };
+   },
+ 
+-  batch(cmds: readonly CmdData[]): CmdData {
++  platformFeature(feature: PlatformFeature, verb: PlatformFeatureVerb): CmdData {
++    return { op: "platform_feature", feature, verb };
++  },
++
++  batch<M extends Msgish>(cmds: readonly CmdData[]): CmdData {
+     return { op: "batch", cmds };
+   },
+ };
+@@ -1085,13 +1097,13 @@ export type Sub<M extends Msgish> = SubData;
+ export const Sub = {
+   none: { op: "none" } as SubData,
+ 
+-  timer(key: string, everyMs: number, msgKind: string): SubData {
++  timer<M extends Msgish>(key: string, everyMs: number, msgKind: string): SubData {
+     return { op: "timer", key, everyMs, msgKind };
+   },
+ 
+   // @native-sqlite-generated-subs
+ 
+-  batch(subs: readonly SubData[]): SubData {
++  batch<M extends Msgish>(subs: readonly SubData[]): SubData {
+     return { op: "batch", subs };
+   },
+ };
+diff --git a/packages/core/scripts/run_external_core_compiler.mjs b/packages/core/scripts/run_external_core_compiler.mjs
+index aa6dcfc..b1a94f1 100644
+--- a/packages/core/scripts/run_external_core_compiler.mjs
++++ b/packages/core/scripts/run_external_core_compiler.mjs
+@@ -66,7 +66,7 @@ try {
+   argv0 = args.compiler
+     ? compilerArgv(args.compiler)
+     : args["compiler-js"]
+-      ? [process.execPath, args["compiler-js"]]
++      ? [process.execPath, "--stack-size=32768", args["compiler-js"]]
+       : publishedScriptcArgv(args["compiler-package-origin"]);
+ } catch (error) {
+   console.error(`the external TypeScript compiler is not installed or has no valid published bin: ${error instanceof Error ? error.message : String(error)} — reinstall @native-sdk/cli, or point NATIVE_SDK_CORE_COMPILER at the pinned release's command`);
+diff --git a/packages/core/scripts/stage_external_core.mjs b/packages/core/scripts/stage_external_core.mjs
+index ef6ba6f..f38865a 100644
+--- a/packages/core/scripts/stage_external_core.mjs
++++ b/packages/core/scripts/stage_external_core.mjs
+@@ -80,8 +80,8 @@ function resolveSpecifiers(text, rel) {
+     .replace(/readonly ([A-Za-z_][A-Za-z0-9_]*(?:<[A-Za-z_, ]*>)?)\[\]/g, "$1[]")
+     .replace(/(?<![A-Za-z0-9_])Bytes(?![A-Za-z0-9_])/g, "Uint8Array")
+     .split("\n")
+-    .filter((line) => line !== "export type Uint8Array = Uint8Array;" && !/^ *type Uint8Array,$/.test(line))
+-    .map((line) => line.replaceAll("type Uint8Array, ", "").replace(/, type Uint8Array([,}])/g, "$1"))
++    .filter((line) => line !== "export type Uint8Array = Uint8Array;" && !/^ *(?:type )?Uint8Array,$/.test(line) && !/^import type \{ Uint8Array \} from /.test(line))
++    .map((line) => line.replaceAll("type Uint8Array, ", "").replaceAll("{ Uint8Array, ", "{ ").replace(/, (?:type )?Uint8Array([,}])/g, "$1"))
+     .join("\n");
+ }
+ 
+diff --git a/packages/core/sdk/core.d.ts b/packages/core/sdk/core.d.ts
+index 336ca90..56d6f45 100644
+--- a/packages/core/sdk/core.d.ts
++++ b/packages/core/sdk/core.d.ts
+@@ -256,6 +256,8 @@ export interface NotificationSpec {
+     readonly actionCommand?: Uint8Array;
+ }
+ export type LocalTimeStyle = "date" | "time" | "datetime";
++export type PlatformFeature = "shortcut_capture" | "global_hotkey" | "configure_shortcuts" | "screen_capture";
++export type PlatformFeatureVerb = "start" | "stop" | "register" | "unregister" | "apply";
+ export type Cmd<M extends Msgish> = {
+     readonly op: "none";
+ } | {
+@@ -487,6 +489,10 @@ export type Cmd<M extends Msgish> = {
+     readonly visible: boolean;
+ } | {
+     readonly op: "quit_app";
++} | {
++    readonly op: "platform_feature";
++    readonly feature: PlatformFeature;
++    readonly verb: PlatformFeatureVerb;
+ } | {
+     readonly op: "image_load";
+     readonly id: number;
+@@ -631,6 +637,7 @@ export declare const Cmd: {
+     ptyWrite(key: string, bytes: Uint8Array): Cmd<never>;
+     ptyResize(key: string, cols: number, rows: number): Cmd<never>;
+     ptyKill(key: string): Cmd<never>;
++    platformFeature(feature: PlatformFeature, verb: PlatformFeatureVerb): Cmd<never>;
+     batch<M extends Msgish>(cmds: readonly Cmd<M>[]): Cmd<M>;
+ };
+ export type Sub<M extends Msgish> = {
+diff --git a/packages/core/sdk/core.ts b/packages/core/sdk/core.ts
+index 81cfa0e..abeb0ef 100644
+--- a/packages/core/sdk/core.ts
++++ b/packages/core/sdk/core.ts
+@@ -1385,8 +1385,22 @@ export type Cmd<M extends Msgish> =
+   | { readonly op: "pty_write"; readonly key: string; readonly bytes: Uint8Array }
+   | { readonly op: "pty_resize"; readonly key: string; readonly cols: number; readonly rows: number }
+   | { readonly op: "pty_kill"; readonly key: string }
++  | {
++      readonly op: "platform_feature";
++      readonly feature: PlatformFeature;
++      readonly verb: PlatformFeatureVerb;
++    }
+   | { readonly op: "batch"; readonly cmds: readonly Cmd<M>[] };
+ 
++/// The platform-feature identifiers carried by `Cmd.platformFeature`. A
++/// new feature is a wire-format break (cmd_format_version bump); the
++/// emitter teaches the new literal at build time.
++export type PlatformFeature = "shortcut_capture" | "global_hotkey" | "configure_shortcuts" | "screen_capture";
++
++/// The platform-feature verbs carried by `Cmd.platformFeature`. A new verb
++/// is a wire-format break (cmd_format_version bump).
++export type PlatformFeatureVerb = "start" | "stop" | "register" | "unregister" | "apply";
++
+ /// The wire encoding of a host record payload, byte-identical to what the
+ /// transpiler derives from the record's TS shape at build time: fields
+ /// sorted by name (code-unit order), concatenated with no field headers —
+@@ -2206,6 +2220,21 @@ export const Cmd = {
+     return { op: "pty_kill", key };
+   },
+ 
++  /// Trigger a platform-feature verb on the Native SDK runtime's
++  /// PlatformServices (not the agentd host bridge). Fire-and-forget: no
++  /// key, no ok/err routing, no result Msg. The host/platform boundary
++  /// stays clean — `host`/`host_bytes` continue to mean agentd, while
++  /// `platformFeature` means the runtime's own platform services.
++  ///
++  /// Both `feature` and `verb` are string-literal-validated at build time
++  /// (NS1027 + NS1030); a new feature or verb is a wire-format break and
++  /// must be taught to the emitter alongside a `cmd_format_version` bump.
++  /// Today only `shortcut_capture` is wired (start/stop), routed to
++  /// `PlatformServices.startShortcutCapture`/`stopShortcutCapture`.
++  platformFeature(feature: PlatformFeature, verb: PlatformFeatureVerb): Cmd<never> {
++    return { op: "platform_feature", feature, verb };
++  },
++
+   /// Several commands from one dispatch, performed in order.
+   batch<M extends Msgish>(cmds: readonly Cmd<M>[]): Cmd<M> {
+     return { op: "batch", cmds };
+diff --git a/packages/core/src/checker.ts b/packages/core/src/checker.ts
+index c681993..9887059 100644
+--- a/packages/core/src/checker.ts
++++ b/packages/core/src/checker.ts
+@@ -2984,7 +2984,7 @@ export class SubsetChecker {
+             this.report("NS1002", "`new Promise` starts asynchronous work.", node);
+           } else if (name === "Date") {
+             this.report("NS1005", "`new Date` reads ambient wall-clock state.", node);
+-          } else if (name !== "Uint8Array") {
++          } else if (name !== "Uint8Array" && name !== "DataView") {
+             const decl = this.tast.declarationOf(node.expression);
+             const cls = this.table.classes.get(name);
+             const supported = decl !== null && ts.isClassDeclaration(decl) && cls !== undefined && cls.decl === decl;
+diff --git a/packages/core/src/contract.ts b/packages/core/src/contract.ts
+index 2479667..5631935 100644
+--- a/packages/core/src/contract.ts
++++ b/packages/core/src/contract.ts
+@@ -669,7 +669,7 @@ class ContractEmitter {
+     return (
+       "{\n" +
+       '  "format": 1,\n' +
+-      '  "wire_version": 7,\n' +
++      '  "wire_version": 8,\n' +
+       '  "abi_version": 2,\n' +
+       '  "compiler_version": "0.0.1",\n' +
+       `  "entry": ${js(this.entry)},\n` +
+diff --git a/packages/core/src/infer.ts b/packages/core/src/infer.ts
+index 2e9969f..7e4262f 100644
+--- a/packages/core/src/infer.ts
++++ b/packages/core/src/infer.ts
+@@ -884,11 +884,7 @@ export class IntInference {
+             return;
+           }
+           if (method === "floor" || method === "ceil" || method === "trunc" || method === "abs" || method === "sign") {
+-            // Integer-classed argument in, integer-classed value out (the
+-            // identity/abs/sign of an integer). A float argument keeps the
+-            // result float: floor(NaN) is NaN, floor(Infinity) is Infinity,
+-            // so no integer type can hold the result soundly.
+-            for (const arg of expr.arguments) this.contribute(arg, c);
++            c.intSource = true;
+             return;
+           }
+           if (method === "round" || method === "sqrt") {
+diff --git a/src/app_runner/root.zig b/src/app_runner/root.zig
+index b60ae23..54c944c 100644
+--- a/src/app_runner/root.zig
++++ b/src/app_runner/root.zig
+@@ -67,6 +67,7 @@ pub const RunOptions = struct {
+     commands: ?[]const native_sdk.Command = null,
+     menus: ?[]const native_sdk.Menu = null,
+     shortcuts: ?[]const native_sdk.Shortcut = null,
++    secure_canvas_widget_ids: []const native_sdk.canvas.ObjectId = &.{},
+     /// Filled by `runWithOptions` from the manifest capability. App entry
+     /// points do not set this themselves; the field only carries the owned
+     /// binding uniformly into each platform's runtime options.
+@@ -813,6 +814,7 @@ fn runNull(app: native_sdk.App, options: RunOptions, init: std.process.Init) !vo
+         .file_access = options.file_access,
+         .environ = init.minimal.environ,
+         .session_recorder = session_recorder,
++        .secure_canvas_widget_ids = options.secure_canvas_widget_ids,
+     });
+ 
+     try runtime.run(app);
+@@ -887,6 +889,7 @@ fn runMacos(app: native_sdk.App, options: RunOptions, init: std.process.Init) !v
+         .file_access = options.file_access,
+         .environ = init.minimal.environ,
+         .session_recorder = session_recorder,
++        .secure_canvas_widget_ids = options.secure_canvas_widget_ids,
+     });
+     native_sdk.runtime.launch_timing.lap("runtime_ready");
+ 
+@@ -958,6 +961,7 @@ fn runLinux(app: native_sdk.App, options: RunOptions, init: std.process.Init) !v
+         .file_access = options.file_access,
+         .environ = init.minimal.environ,
+         .session_recorder = session_recorder,
++        .secure_canvas_widget_ids = options.secure_canvas_widget_ids,
+     });
+ 
+     try runtime.run(app);
+@@ -1028,6 +1032,7 @@ fn runWindows(app: native_sdk.App, options: RunOptions, init: std.process.Init)
+         .file_access = options.file_access,
+         .environ = init.minimal.environ,
+         .session_recorder = session_recorder,
++        .secure_canvas_widget_ids = options.secure_canvas_widget_ids,
+     });
+ 
+     try runtime.run(app);
+@@ -1099,6 +1104,11 @@ fn setupSessionRecorder(init: std.process.Init, app_info: native_sdk.AppInfo) ?*
+ /// Seal the journal on clean exit. A crashed or killed app leaves no
+ /// end record, and replay refuses the file as truncated — honest by
+ /// construction.
++fn setReplayWindowChrome(context: *anyopaque, window_id: native_sdk.platform.WindowId, chrome: native_sdk.platform.WindowChrome) anyerror!void {
++    const null_platform: *native_sdk.NullPlatform = @ptrCast(@alignCast(context));
++    try null_platform.setWindowChromeForWindow(window_id, chrome);
++}
++
+ fn finishSessionRecorder(recorder: ?*native_sdk.runtime.SessionRecorder) void {
+     const active = recorder orelse return;
+     active.finish();
+@@ -1180,6 +1190,7 @@ fn runSessionReplay(app: native_sdk.App, options: RunOptions, init: std.process.
+         .commands = commands,
+         .menus = menus,
+         .shortcuts = shortcuts,
++        .secure_canvas_widget_ids = options.secure_canvas_widget_ids,
+     });
+ 
+     const verify = if (init.environ_map.get("NATIVE_SDK_SESSION_VERIFY")) |value|
+@@ -1190,6 +1201,10 @@ fn runSessionReplay(app: native_sdk.App, options: RunOptions, init: std.process.
+     const report = native_sdk.runtime.replaySession(runtime, app, journal_bytes, .{
+         .verify = verify,
+         .blobs = if (blob_store) |store| store.source() else null,
++        .window_chrome_sink = .{
++            .context = null_platform,
++            .set_fn = setReplayWindowChrome,
++        },
+     }) catch |err| {
+         switch (err) {
+             error.JournalBadMagic,
+diff --git a/src/app_runner/ts_core_main.zig b/src/app_runner/ts_core_main.zig
+index cd98674..91c8d7b 100644
+--- a/src/app_runner/ts_core_main.zig
++++ b/src/app_runner/ts_core_main.zig
+@@ -63,6 +63,8 @@ const runner = @import("runner");
+ const native_sdk = @import("native_sdk");
+ const manifest = @import("app_manifest_zon");
+ pub const core = @import("core.zig");
++const ts_host = @import("ts_host");
++const build_options = @import("build_options");
+ const services = @import("services.zig");
+ const service_carrier = @import("service_carrier.zig");
+ const relational_migrations = @import("migrations.zig");
+@@ -94,6 +96,7 @@ const allowed_origins = manifestAllowedOrigins();
+ const app_data_dir_env = "NATIVE_SDK_APP_DATA_DIR";
+ 
+ pub fn main(init: std.process.Init) !void {
++    comptime validateTsHost();
+     var options: Adapter.Options = .{
+         .name = manifest.name,
+         .scene = shell_scene,
+@@ -117,6 +120,33 @@ pub fn main(init: std.process.Init) !void {
+         // exported command mapper.
+         options.on_command = core.commandMsg;
+     }
++    if (comptime @hasDecl(ts_host, "tokens")) {
++        options.tokens_fn = hostTokens;
++    }
++    if (comptime @hasDecl(ts_host, "viewViewport")) {
++        options.view_viewport = hostViewportView;
++    } else if (comptime @hasDecl(ts_host, "view")) {
++        options.view = hostView;
++    }
++    if (comptime @hasDecl(ts_host, "hostPoll")) {
++        options.host_poll = hostPoll;
++    }
++    if (comptime @hasDecl(ts_host, "surfaceKeyMsg")) {
++        options.surface_key = hostSurfaceKeyMsg;
++    }
++    if (comptime @hasDecl(ts_host, "surfaceTextEdit")) {
++        options.surface_text_edit = hostSurfaceTextEdit;
++    }
++    if (comptime @hasDecl(ts_host, "deinit")) {
++        options.host_deinit = hostDeinit;
++    }
++    if (comptime @hasDecl(ts_host, "markupSources")) {
++        options.markup.?.sources = ts_host.markupSources();
++    }
++    if (comptime (@hasDecl(ts_host, "view") or @hasDecl(ts_host, "viewViewport")) and @hasDecl(ts_host, "fragments")) {
++        options.fragment_watch = .{ .fragments = ts_host.fragments(core), .io = init.io };
++        options.markup = null;
++    }
+     // The platform caches directory for this app: when the core's
+     // `Cmd.audioPlay` names a URL with no cachePath, the bridge derives
+     // the conventional content-addressed path under this directory —
+@@ -318,6 +348,10 @@ pub fn main(init: std.process.Init) !void {
+         .default_frame = comptime defaultFrame(),
+         .restore_state = comptime startupRestoreState(),
+         .js_window_api = false,
++        .secure_canvas_widget_ids = if (comptime @hasDecl(ts_host, "secureInputWidgetIds"))
++            ts_host.secureInputWidgetIds(syntheticCodeSurfaceReplayAuthorized(init.environ_map))
++        else
++            &.{},
+         .security = .{
+             .permissions = app_permissions,
+             .navigation = .{ .allowed_origins = allowed_origins },
+@@ -514,3 +548,86 @@ fn manifestAllowedOrigins() []const []const u8 {
+         return manifestStringList(manifest.security.navigation, "allowed_origins");
+     }
+ }
++
++fn syntheticCodeSurfaceReplayAuthorized(environ_map: anytype) bool {
++    if (comptime !build_options.synthetic_code_surface_replay) return false;
++    const marker = environ_map.get("VOLT_CODE_SURFACE_SYNTHETIC_REPLAY") orelse return false;
++    if (!std.mem.eql(u8, marker, "fixture-v1")) return false;
++    const home = environ_map.get("HOME") orelse return false;
++    const workspace = environ_map.get("VOLT_WORKSPACE_ROOT") orelse return false;
++    const visual_codex = environ_map.get("VOLT_VISUAL_CODEX_EXECUTABLE") orelse return false;
++    const record_path = environ_map.get("NATIVE_SDK_SESSION_RECORD");
++    const replay_path = environ_map.get("NATIVE_SDK_SESSION_REPLAY");
++    const journal_matches = if (record_path) |path|
++        replay_path == null and std.mem.eql(u8, path, build_options.synthetic_code_surface_journal)
++    else if (replay_path) |path|
++        std.mem.eql(u8, path, build_options.synthetic_code_surface_journal)
++    else
++        false;
++    return journal_matches and
++        std.mem.eql(u8, home, build_options.synthetic_code_surface_home) and
++        std.mem.eql(u8, workspace, build_options.synthetic_code_surface_workspace) and
++        std.mem.eql(u8, visual_codex, build_options.synthetic_code_surface_visual_codex);
++}
++
++fn hostTokens(model: *const core.Model) native_sdk.canvas.DesignTokens {
++    return ts_host.tokens(core, model);
++}
++
++fn hostView(ui: *Adapter.Ui, model: *const core.Model) Adapter.Ui.Node {
++    return ts_host.view(core, ui, model);
++}
++
++fn hostViewportView(ui: *Adapter.Ui, model: *const core.Model, viewport: native_sdk.geometry.SizeF) Adapter.Ui.Node {
++    return ts_host.viewViewport(core, ui, model, viewport);
++}
++
++fn hostSurfaceMsg(msg: Adapter.Msg) void {
++    ts_host.surfaceMsg(msg);
++}
++
++fn hostPoll(effects: *Adapter.Effects) void {
++    ts_host.hostPoll(effects);
++}
++
++fn hostSurfaceKeyMsg(
++    tree: *const Adapter.Ui.Tree,
++    target: native_sdk.canvas.WidgetFocusTarget,
++    keyboard: native_sdk.canvas.WidgetKeyboardEvent,
++) ?Adapter.Msg {
++    return ts_host.surfaceKeyMsg(core, tree, target, keyboard);
++}
++
++fn hostSurfaceTextEdit(
++    tree: *const Adapter.Ui.Tree,
++    target_id: native_sdk.canvas.ObjectId,
++    edit: native_sdk.canvas.TextInputEvent,
++    post_state: ?native_sdk.canvas.TextEditState,
++) ?Adapter.Msg {
++    return ts_host.surfaceTextEdit(core, tree, target_id, edit, post_state);
++}
++
++fn hostDeinit() void {
++    ts_host.deinit();
++}
++
++fn validateTsHost() void {
++    inline for (.{
++        "Model",
++        "Msg",
++        "initialModel",
++        "update",
++        "subscriptions",
++        "commandMsg",
++        "frameMsg",
++        "keyMsg",
++        "appearanceMsg",
++        "chromeMsg",
++        "envMsgs",
++        "viewUnbound",
++    }) |name| {
++        if (@hasDecl(ts_host, name)) {
++            @compileError("src/ts_host.zig is a thin native extension and must not declare " ++ name);
++        }
++    }
++}
+diff --git a/src/app_runner/ts_host_default.zig b/src/app_runner/ts_host_default.zig
+new file mode 100644
+index 0000000..b1746b7
+--- /dev/null
++++ b/src/app_runner/ts_host_default.zig
+@@ -0,0 +1,2 @@
++//! Empty app-local extension for TypeScript Core apps that do not provide
++//! src/ts_host.zig. The generated wiring probes optional declarations.
+diff --git a/src/platform/linux/root.zig b/src/platform/linux/root.zig
+index a9e23fe..086c8cf 100644
+--- a/src/platform/linux/root.zig
++++ b/src/platform/linux/root.zig
+@@ -484,6 +484,8 @@ pub const LinuxPlatform = struct {
+             // app that skips the capability check still learns exactly
+             // what is missing.
+             .video_playback => false,
++            .shortcut_capture => false,
++            .screen_capture => false,
+         };
+     }
+ 
+@@ -617,6 +619,7 @@ fn gtkCallback(context: ?*anyopaque, event: *const GtkEvent) callconv(.c) void {
+             .label = event.view_label[0..event.view_label_len],
+             .size = geometry.SizeF.init(@floatCast(event.width), @floatCast(event.height)),
+             .scale_factor = @floatCast(event.scale),
++            .window_chrome = if (state.self) |linux| windowChrome(linux, event.window_id) else .{},
+             .frame_index = event.frame_index,
+             .timestamp_ns = event.timestamp_ns,
+             .frame_interval_ns = event.frame_interval_ns,
+diff --git a/src/platform/macos/appkit_host.h b/src/platform/macos/appkit_host.h
+index 43dc7e5..8bbc61a 100644
+--- a/src/platform/macos/appkit_host.h
++++ b/src/platform/macos/appkit_host.h
+@@ -421,6 +421,23 @@ void native_sdk_appkit_emit_window_event(native_sdk_appkit_host_t *host, uint64_
+ void native_sdk_appkit_set_security_policy(native_sdk_appkit_host_t *host, const char *allowed_origins, size_t allowed_origins_len, const char *external_urls, size_t external_urls_len, int external_action);
+ void native_sdk_appkit_set_menus(native_sdk_appkit_host_t *host, const char *const *menu_titles, const size_t *menu_title_lens, size_t menu_count, const uint32_t *item_menu_indices, const char *const *item_labels, const size_t *item_label_lens, const char *const *item_commands, const size_t *item_command_lens, const char *const *item_keys, const size_t *item_key_lens, const uint32_t *item_modifiers, const int *item_separators, const int *item_enabled, const int *item_checked, size_t item_count);
+ void native_sdk_appkit_set_shortcuts(native_sdk_appkit_host_t *host, const char *const *ids, const size_t *id_lens, const char *const *keys, const size_t *key_lens, const uint32_t *modifiers, size_t count);
++// Begin/stop a raw key+modifier capture session. While capture is
++// active the key-down local monitor emits every intercepted event as
++// a `__capture__`-id shortcut event (modifiers reflect the live
++// device flags) and swallows it; registered shortcuts are suspended
++// for the capture's duration. Used by the keyboard-shortcuts capture
++// UI to record arbitrary combinations the registered-shortcut table
++// cannot represent ahead of time. `start` is idempotent; `stop`
++// leaves the registered-shortcut monitor installed and ready.
++void native_sdk_appkit_start_shortcut_capture(native_sdk_appkit_host_t *host);
++void native_sdk_appkit_stop_shortcut_capture(native_sdk_appkit_host_t *host);
++// I-6 compile-only ABI：保留 ScreenCaptureKit selector 的编译验证。
++// 生产 MacPlatform 不绑定这些符号，中央 effect dispatcher 统一
++// 返回 UnsupportedService，因此不会触发 TCC，也不承诺 surface。
++// 只有后续具备异步权威 ACK、可消费像素通道与真实授权流程后，
++// 才能把此 ABI 接入运行时。
++int native_sdk_appkit_start_screen_capture(native_sdk_appkit_host_t *host);
++void native_sdk_appkit_stop_screen_capture(native_sdk_appkit_host_t *host);
+ int native_sdk_appkit_create_window(native_sdk_appkit_host_t *host, uint64_t window_id, const char *window_title, size_t window_title_len, const char *window_label, size_t window_label_len, double x, double y, double width, double height, int restore_frame, int initial_placement, int restore_policy, int resizable, int titlebar_style, int show_policy, uint32_t window_flags);
+ // Content min-size floor for a created window (NSWindow contentMinSize):
+ // the user's resize stops at the floor. Values <= 0 leave that axis at
+diff --git a/src/platform/macos/appkit_host.m b/src/platform/macos/appkit_host.m
+index 75fd450..bad23cf 100644
+--- a/src/platform/macos/appkit_host.m
++++ b/src/platform/macos/appkit_host.m
+@@ -14,6 +14,10 @@
+ #import <WebKit/WebKit.h>
+ #import <CoreFoundation/CoreFoundation.h>
+ #import <CoreText/CoreText.h>
++
++// I-6 visual screen capture authorization preflight.
++#import <CoreGraphics/CoreGraphics.h>
++
+ #import <ImageIO/ImageIO.h>
+ #import <dispatch/dispatch.h>
+ #import <Security/Security.h>
+@@ -32,6 +36,177 @@
+ @class NativeSdkAudioCaptureTarget;
+ @class NativeSdkScreenAudioCapture;
+ 
++// I-6 compile-only ScreenCaptureKit 控制器（生产 runtime 不绑定）。
++// 持有一条 SCStream 的生命周期：startScreenCapture 枚举
++// SCShareable Content（主显示器）、配置 SCStreamConfiguration、
++// 启动 SCStream；stopScreenCapture 停止并释放。帧通过
++// stream:didOutputSampleBuffer:ofType: 回调到达，本框架仅记录
++// 帧计数（帧像素的 surface 通道接入由后续切片完成）。
++// TCC Screen Recording 授权预检使用 CGPreflightScreenCaptureAccess，
++// 缺失时 start 返回非零，不触发系统授权弹窗（避免在用户无预期时
++// 打断）；授权引导由产品层显式发起。
++API_AVAILABLE(macos(12.3))
++@interface NativeSdkScreenCaptureController : NSObject <SCStreamDelegate, SCStreamOutput>
++
++// 当前活跃的 SCStream，nil 表示未启动。
++@property(nonatomic, strong, nullable) SCStream *stream;
++// 已输出的视频帧计数，仅供诊断/测试断言，非业务权威。
++@property(nonatomic, assign) NSUInteger videoFrameCount;
++// 上一次 start 的错误码（0 = 无错误），用于 C 入口返回值。
++@property(nonatomic, assign) NSInteger lastStartError;
++
++// 启动屏幕捕获。返回 0 成功，非零表示 TCC 授权缺失、
++// SCShareable Content 枚举失败或 SCStream 启动失败。
++- (NSInteger)startScreenCapture;
++// 停止屏幕捕获并释放 SCStream。幂等。
++- (void)stopScreenCapture;
++
++@end
++
++@implementation NativeSdkScreenCaptureController
++
++- (instancetype)init {
++    self = [super init];
++    if (!self) return nil;
++    _stream = nil;
++    _videoFrameCount = 0;
++    _lastStartError = 0;
++    return self;
++}
++
++- (void)dealloc {
++    // ARC 下确保 SCStream 在 dealloc 前停止，避免回调进入已释放的 delegate。
++    [self stopScreenCapture];
++}
++
++#pragma mark - SCStreamDelegate
++
++// SCStreamDelegate 回调：流停止时触发。此处仅清理引用，
++// 不伪造业务状态——TS Core 的 pending 由 stop verb 或
++// 后续 surface ACK 显式完成。
++- (void)stream:(SCStream *)stream didStopWithError:(NSError *)error {
++    (void)stream;
++    if (self.stream == stream) {
++        self.stream = nil;
++    }
++    // 记录错误码供诊断；非零 error 不在这里伪造成功。
++    if (error) {
++        self.lastStartError = error.code;
++    }
++}
++
++#pragma mark - 帧输出
++
++// SCStreamOutput 帧回调：视频帧到达。本框架仅累加计数，
++// 实际像素 surface 通道接入由后续切片完成。sampleBuffer
++// 的所有权遵循 ARC 语义，不在此处 retain/release。
++- (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type {
++    (void)stream;
++    (void)sampleBuffer;
++    if (type == SCStreamOutputTypeScreen) {
++        self.videoFrameCount += 1;
++    }
++}
++
++#pragma mark - 启停
++
++- (NSInteger)startScreenCapture {
++    // 幂等：已在运行则直接返回成功。
++    if (self.stream) return 0;
++    self.videoFrameCount = 0;
++    self.lastStartError = 0;
++
++    // TCC Screen Recording 授权预检。CGPreflightScreenCaptureAccess
++    // 不弹窗，仅查询当前授权状态；缺失时返回非零，由产品层
++    // 显式引导用户到系统偏好设置授权。
++    if (!CGPreflightScreenCaptureAccess()) {
++        self.lastStartError = -1;
++        return self.lastStartError;
++    }
++
++    // SCShareableContent 枚举必须在后台队列异步完成；本框架使用
++    // dispatch_semaphore 同步等待（仅 prototype，后续切片改为
++    // 异步 surface ACK 模式，避免阻塞主线程）。
++    __block SCContentFilter *filter = nil;
++    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
++    [SCShareableContent getShareableContentExcludingDesktopWindows:NO
++                                                  onScreenWindowsOnly:YES
++                                            completionHandler:^(SCShareableContent *content, NSError *error) {
++        if (!error && content.displays.count > 0) {
++            filter = [[SCContentFilter alloc] initWithDisplay:content.displays.firstObject
++                                       excludingWindows:@[]];
++        } else if (error) {
++            self.lastStartError = error.code;
++        }
++        dispatch_semaphore_signal(sem);
++    }];
++    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
++
++    if (!filter) {
++        if (self.lastStartError == 0) self.lastStartError = -2;
++        return self.lastStartError;
++    }
++
++    // 配置 SCStream：BGRA 像素格式，主显示器分辨率。
++    SCStreamConfiguration *config = [SCStreamConfiguration new];
++    config.pixelFormat = kCVPixelFormatType_32BGRA;
++    config.showsCursor = YES;
++
++    SCStream *stream = [[SCStream alloc] initWithFilter:filter
++                                          configuration:config
++                                               delegate:self];
++    if (!stream) {
++        self.lastStartError = -3;
++        return self.lastStartError;
++    }
++
++    // 添加视频输出队列（主队列仅 prototype；后续切片改为专用串行队列）。
++    NSError *addOutputError = nil;
++    BOOL added = [stream addStreamOutput:self
++                                    type:SCStreamOutputTypeScreen
++                          sampleHandlerQueue:dispatch_get_main_queue()
++                                     error:&addOutputError];
++    if (!added) {
++        self.lastStartError = addOutputError.code ?: -4;
++        return self.lastStartError;
++    }
++
++    // 启动流。startCaptureWithCompletionHandler 异步；本框架同步等待。
++    __block NSError *startError = nil;
++    dispatch_semaphore_t startSem = dispatch_semaphore_create(0);
++    [stream startCaptureWithCompletionHandler:^(NSError *error) {
++        startError = error;
++        dispatch_semaphore_signal(startSem);
++    }];
++    dispatch_semaphore_wait(startSem, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
++
++    if (startError) {
++        self.lastStartError = startError.code;
++        return self.lastStartError;
++    }
++
++    self.stream = stream;
++    return 0;
++}
++
++- (void)stopScreenCapture {
++    SCStream *stream = self.stream;
++    if (!stream) return;
++    self.stream = nil;
++    // stopCaptureWithCompletionHandler 异步；同步等待确保流真正停止
++    // 后再释放（避免 didStopWithError 回调进入已释放的 delegate）。
++    __block NSError *stopError = nil;
++    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
++    [stream stopCaptureWithCompletionHandler:^(NSError *error) {
++        stopError = error;
++        dispatch_semaphore_signal(sem);
++    }];
++    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
++    (void)stopError;
++}
++
++@end
++
+ static const NSUInteger NativeSdkMaxChildWebViews = 16;
+ static const NSUInteger NativeSdkMaxNativeViews = 32;
+ static const NSInteger NativeSdkBridgeFrameKeepaliveFrames = 600;
+@@ -180,7 +355,10 @@ static uint64_t NativeSdkTimestampNanoseconds(void) {
+ }
+ 
+ static uint64_t NativeSdkRetainedFrameIntervalNanoseconds(NSScreen *screen) {
+-    NSInteger framesPerSecond = screen ? screen.maximumFramesPerSecond : 0;
++    NSInteger framesPerSecond = 0;
++    if (@available(macOS 12.0, *)) {
++        framesPerSecond = screen ? screen.maximumFramesPerSecond : 0;
++    }
+     if (framesPerSecond <= 0) framesPerSecond = 60;
+     framesPerSecond = MAX(30, MIN(120, framesPerSecond));
+     return NativeSdkNanosecondsPerSecond / (uint64_t)framesPerSecond;
+@@ -1020,9 +1198,22 @@ @interface NativeSdkAppKitHost : NSObject <WKNavigationDelegate, NSMenuDelegate,
+ @property(nonatomic, assign) BOOL observesAppearanceChanges;
+ @property(nonatomic, assign) NSInteger bridgeFrameKeepalive;
+ @property(nonatomic, strong) id shortcutEventMonitor;
++// While YES, the key-down monitor emits every intercepted event as a
++// `__capture__`-id shortcut event with live device modifiers and
++// swallows it; registered-shortcut matching is skipped for the
++// capture's duration. Toggled by startShortcutCapture/stopShortcutCapture.
++@property(nonatomic, assign) BOOL shortcutCaptureMode;
++// The SDK window that owned the control which started capture. Capture is
++// deliberately app-local and window-local: switching windows never carries a
++// partially entered chord into the new key window.
++@property(nonatomic, assign) uint64_t shortcutCaptureWindowId;
+ @property(nonatomic, strong) id viewFocusEventMonitor;
+ @property(nonatomic, strong) id willTerminateObserver;
+ @property(nonatomic, strong) dispatch_source_t sigtermSource;
++
++// I-6 ScreenCaptureKit 扩展：屏幕捕获控制器，懒加载。
++// 持有 SCStream 生命周期；nil 表示未初始化（首次 start 时创建）。
++@property(nonatomic, strong, nullable) NativeSdkScreenCaptureController *screenCaptureController API_AVAILABLE(macos(12.3));
+ @property(nonatomic, strong) NSArray<NativeSdkShortcut *> *shortcuts;
+ @property(nonatomic, strong) NSMutableDictionary<NSNumber *, NativeSdkStatusItemEntry *> *statusItems;
+ @property(nonatomic, assign) native_sdk_appkit_tray_callback_t trayCallback;
+@@ -1194,6 +1385,14 @@ - (void)emitEventNamed:(NSString *)name detailJSON:(NSString *)detailJSON window
+ - (void)setShortcutsWithIds:(const char *const *)ids idLengths:(const size_t *)idLengths keys:(const char *const *)keys keyLengths:(const size_t *)keyLengths modifiers:(const uint32_t *)modifiers count:(size_t)count;
+ - (BOOL)handleShortcutEvent:(NSEvent *)event;
+ - (void)emitShortcutWithId:(NSString *)identifier key:(NSString *)key modifiers:(uint32_t)modifiers event:(NSEvent *)event;
++- (void)startShortcutCapture;
++- (void)stopShortcutCapture;
++- (void)stopShortcutCaptureForWindowId:(uint64_t)windowId;
++- (BOOL)handleShortcutCaptureEvent:(NSEvent *)event;
++
++// I-6 ScreenCaptureKit 扩展：转发到 NativeSdkScreenCaptureController。
++- (NSInteger)startScreenCapture;
++- (void)stopScreenCapture;
+ @end
+ 
+ // Recursively re-emit the gpu-surface resize event for every metal
+@@ -1239,6 +1438,11 @@ - (void)windowDidBecomeKey:(NSNotification *)notification {
+     [self.host scheduleFrame];
+ }
+ 
++- (void)windowDidResignKey:(NSNotification *)notification {
++    (void)notification;
++    [self.host stopShortcutCaptureForWindowId:self.windowId];
++}
++
+ // The tall-titlebar toolbar is pure geometry (it exists only to get the
+ // unified band height and centered traffic lights), but in fullscreen
+ // the system keeps an attached toolbar VISIBLE as a blank band covering
+@@ -1369,6 +1573,7 @@ - (BOOL)windowShouldClose:(NSWindow *)sender {
+ 
+ - (void)windowWillClose:(NSNotification *)notification {
+     (void)notification;
++    [self.host stopShortcutCaptureForWindowId:self.windowId];
+     if (self.observesContentLayout) {
+         NSWindow *window = self.host.windows[@(self.windowId)];
+         [window removeObserver:self forKeyPath:@"contentLayoutRect"];
+@@ -8143,6 +8348,7 @@ - (void)dealloc {
+     }
+     [self stopAppearanceObservers];
+     if (self.shortcutEventMonitor) {
++        self.shortcutCaptureMode = NO;
+         [NSEvent removeMonitor:self.shortcutEventMonitor];
+         self.shortcutEventMonitor = nil;
+     }
+@@ -9904,13 +10110,23 @@ - (void)runWithCallback:(native_sdk_appkit_event_callback_t)callback context:(vo
+     }
+     if (!self.shortcutEventMonitor) {
+         __weak NativeSdkAppKitHost *weakSelf = self;
+-        self.shortcutEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *event) {
++        self.shortcutEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskFlagsChanged handler:^NSEvent *(NSEvent *event) {
+             NativeSdkAppKitHost *strongSelf = weakSelf;
+             if (!strongSelf) return event;
+             // An adopted surface with the keyboard (a VM display) gets raw
+             // keys; app shortcuts resume when focus returns to app chrome.
+             NSResponder *first = event.window.firstResponder;
+-            if ([first isKindOfClass:[NSView class]] && [strongSelf viewIsAdoptedSurfaceDescendant:(NSView *)first]) return event;
++            if ([first isKindOfClass:[NSView class]] && [strongSelf viewIsAdoptedSurfaceDescendant:(NSView *)first]) {
++                if (strongSelf.shortcutCaptureMode) [strongSelf stopShortcutCapture];
++                return event;
++            }
++            // Capture mode takes precedence over registered-shortcut
++            // matching: the keyboard-shortcuts capture UI wants every
++            // key-down and bare-modifier change reported verbatim.
++            if (strongSelf.shortcutCaptureMode) {
++                return [strongSelf handleShortcutCaptureEvent:event] ? nil : event;
++            }
++            if (event.type == NSEventTypeFlagsChanged) return event;
+             if ([strongSelf handleShortcutEvent:event]) return nil;
+             return event;
+         }];
+@@ -10030,6 +10246,9 @@ - (void)stop {
+     [self audioStop];
+     [self videoStop];
+     if (self.shortcutEventMonitor) {
++        // Exit capture mode first so the monitor about to be removed
++        // cannot emit a final captured event during teardown.
++        self.shortcutCaptureMode = NO;
+         [NSEvent removeMonitor:self.shortcutEventMonitor];
+         self.shortcutEventMonitor = nil;
+     }
+@@ -10101,6 +10320,7 @@ - (void)applicationDidBecomeActive:(NSNotification *)notification {
+ 
+ - (void)applicationDidResignActive:(NSNotification *)notification {
+     (void)notification;
++    [self stopShortcutCapture];
+     [self emitEvent:(native_sdk_appkit_event_t){ .kind = NATIVE_SDK_APPKIT_EVENT_APP_DEACTIVATED }];
+ }
+ 
+@@ -12107,7 +12327,85 @@ - (void)emitShortcutWithId:(NSString *)identifier key:(NSString *)key modifiers:
+     }];
+ }
+ 
+-- (BOOL)emitDroppedFileURLs:(NSArray<NSURL *> *)urls windowId:(uint64_t)windowId viewLabel:(NSString *)viewLabel point:(NSPoint)point {
++- (void)startShortcutCapture {
++    uint64_t windowId = [self activeCommandWindowId];
++    if (!self.windows[@(windowId)]) {
++        [self stopShortcutCapture];
++        return;
++    }
++    // Idempotent for the owning window. A start from another key window
++    // replaces the old session rather than carrying its modifier preview.
++    self.shortcutCaptureWindowId = windowId;
++    self.shortcutCaptureMode = YES;
++}
++
++- (void)stopShortcutCapture {
++    self.shortcutCaptureMode = NO;
++    self.shortcutCaptureWindowId = 0;
++}
++
++#pragma mark - I-6 ScreenCaptureKit 扩展
++
++// 转发到 NativeSdkScreenCaptureController，懒加载。
++// 失败时返回非零错误码，TS Core 映射为 error.UnsupportedService。
++- (NSInteger)startScreenCapture {
++    if (@available(macOS 12.3, *)) {
++        if (!self.screenCaptureController) {
++            self.screenCaptureController = [[NativeSdkScreenCaptureController alloc] init];
++        }
++        return [self.screenCaptureController startScreenCapture];
++    }
++    return -5;
++}
++
++- (void)stopScreenCapture {
++    if (@available(macOS 12.3, *)) {
++        [self.screenCaptureController stopScreenCapture];
++    }
++}
++
++- (void)stopShortcutCaptureForWindowId:(uint64_t)windowId {
++    if (self.shortcutCaptureMode && self.shortcutCaptureWindowId == windowId) {
++        [self stopShortcutCapture];
++    }
++}
++
++- (BOOL)handleShortcutCaptureEvent:(NSEvent *)event {
++    if (!self.shortcutCaptureMode) return NO;
++    NSWindow *eventWindow = event.window ?: NSApp.keyWindow;
++    NSWindow *ownerWindow = self.windows[@(self.shortcutCaptureWindowId)];
++    if (!ownerWindow || eventWindow != ownerWindow || !ownerWindow.isKeyWindow || !NSApp.isActive) {
++        [self stopShortcutCapture];
++        return NO;
++    }
++
++    // Modifier transitions preview the current chord but do not complete it.
++    if (event.type == NSEventTypeFlagsChanged) {
++        [self emitShortcutWithId:@"__capture__"
++                             key:@""
++                       modifiers:NativeSdkModifierFlagsForEvent(event)
++                            event:event];
++        return YES;
++    }
++    if (event.type != NSEventTypeKeyDown) return NO;
++
++    // The local monitor must swallow repeats while capture is active, but a
++    // repeat is never the one accepted chord. Escape is an explicit cancel.
++    if (event.isARepeat) return YES;
++    NSString *key = NativeSdkShortcutKeyForEvent(event);
++    if ([key isEqualToString:@"escape"]) {
++        [self stopShortcutCapture];
++        return YES;
++    }
++    if (key.length == 0) return YES;
++
++    uint32_t modifiers = NativeSdkModifierFlagsForEvent(event);
++    [self stopShortcutCapture];
++    [self emitShortcutWithId:@"__capture__" key:key modifiers:modifiers event:event];
++    return YES;
++}
++
++ - (BOOL)emitDroppedFileURLs:(NSArray<NSURL *> *)urls windowId:(uint64_t)windowId viewLabel:(NSString *)viewLabel point:(NSPoint)point {
+     if (urls.count == 0) return NO;
+     NSMutableArray<NSString *> *paths = [NSMutableArray array];
+     for (NSURL *url in urls) {
+@@ -12782,6 +13080,28 @@ void native_sdk_appkit_set_shortcuts(native_sdk_appkit_host_t *host, const char
+     [object setShortcutsWithIds:ids idLengths:id_lens keys:keys keyLengths:key_lens modifiers:modifiers count:count];
+ }
+ 
++void native_sdk_appkit_start_shortcut_capture(native_sdk_appkit_host_t *host) {
++    NativeSdkAppKitHost *object = (__bridge NativeSdkAppKitHost *)host;
++    [object startShortcutCapture];
++}
++
++void native_sdk_appkit_stop_shortcut_capture(native_sdk_appkit_host_t *host) {
++    NativeSdkAppKitHost *object = (__bridge NativeSdkAppKitHost *)host;
++    [object stopShortcutCapture];
++}
++
++// I-6 ScreenCaptureKit 扩展：C 入口，供 src/platform/macos/root.zig
++// 的 extern fn 调用。桥接 ARC ObjC 对象与 C ABI。
++int native_sdk_appkit_start_screen_capture(native_sdk_appkit_host_t *host) {
++    NativeSdkAppKitHost *object = (__bridge NativeSdkAppKitHost *)host;
++    return (int)[object startScreenCapture];
++}
++
++void native_sdk_appkit_stop_screen_capture(native_sdk_appkit_host_t *host) {
++    NativeSdkAppKitHost *object = (__bridge NativeSdkAppKitHost *)host;
++    [object stopScreenCapture];
++}
++
+ int native_sdk_appkit_create_window(native_sdk_appkit_host_t *host, uint64_t window_id, const char *window_title, size_t window_title_len, const char *window_label, size_t window_label_len, double x, double y, double width, double height, int restore_frame, int initial_placement, int restore_policy, int resizable, int titlebar_style, int show_policy, uint32_t window_flags) {
+     NativeSdkAppKitHost *object = (__bridge NativeSdkAppKitHost *)host;
+     NSString *titleString = window_title ? [[NSString alloc] initWithBytes:window_title length:window_title_len encoding:NSUTF8StringEncoding] : @"";
+diff --git a/src/platform/macos/root.zig b/src/platform/macos/root.zig
+index 4bd703d..d40c63d 100644
+--- a/src/platform/macos/root.zig
++++ b/src/platform/macos/root.zig
+@@ -187,6 +187,13 @@ extern fn native_sdk_appkit_emit_window_event(host: *AppKitHost, window_id: u64,
+ extern fn native_sdk_appkit_set_security_policy(host: *AppKitHost, allowed_origins: [*]const u8, allowed_origins_len: usize, external_urls: [*]const u8, external_urls_len: usize, external_action: c_int) void;
+ extern fn native_sdk_appkit_set_menus(host: *AppKitHost, menu_titles: [*]const [*]const u8, menu_title_lens: [*]const usize, menu_count: usize, item_menu_indices: [*]const u32, item_labels: [*]const [*]const u8, item_label_lens: [*]const usize, item_commands: [*]const [*]const u8, item_command_lens: [*]const usize, item_keys: [*]const [*]const u8, item_key_lens: [*]const usize, item_modifiers: [*]const u32, item_separators: [*]const c_int, item_enabled: [*]const c_int, item_checked: [*]const c_int, item_count: usize) void;
+ extern fn native_sdk_appkit_set_shortcuts(host: *AppKitHost, ids: [*]const [*]const u8, id_lens: [*]const usize, keys: [*]const [*]const u8, key_lens: [*]const usize, modifiers: [*]const u32, count: usize) void;
++extern fn native_sdk_appkit_start_shortcut_capture(host: *AppKitHost) void;
++extern fn native_sdk_appkit_stop_shortcut_capture(host: *AppKitHost) void;
++// I-6 ScreenCaptureKit 扩展：appkit_host.m 中
++// NativeSdkScreenCaptureController 的 C 入口（见 objc.m patch）。
++// start 返回非零表示 TCC 预检失败或 SCStream 启动失败。
++extern fn native_sdk_appkit_start_screen_capture(host: *AppKitHost) c_int;
++extern fn native_sdk_appkit_stop_screen_capture(host: *AppKitHost) void;
+ extern fn native_sdk_appkit_request_frame(host: *AppKitHost) void;
+ extern fn native_sdk_appkit_create_window(host: *AppKitHost, window_id: u64, window_title: [*]const u8, window_title_len: usize, window_label: [*]const u8, window_label_len: usize, x: f64, y: f64, width: f64, height: f64, restore_frame: c_int, initial_placement: c_int, restore_policy: c_int, resizable: c_int, titlebar_style: c_int, show_policy: c_int, window_flags: u32) c_int;
+ extern fn native_sdk_appkit_set_window_content_min_size(host: *AppKitHost, window_id: u64, min_width: f64, min_height: f64) c_int;
+@@ -809,6 +816,11 @@ pub const MacPlatform = struct {
+                 .configure_security_policy_fn = configureSecurityPolicy,
+                 .configure_menus_fn = configureMenus,
+                 .configure_shortcuts_fn = configureShortcuts,
++                .start_shortcut_capture_fn = startShortcutCapture,
++                .stop_shortcut_capture_fn = stopShortcutCapture,
++                // I-6 quarantine：保留 compile-only ABI，但不把 ScreenCaptureKit
++                // 服务注入生产 PlatformServices，避免未完成的同步原型触发 TCC。
++                // 直接调用服务便利方法也会返回 error.UnsupportedService。
+                 .emit_window_event_fn = emitWindowEvent,
+                 .start_timer_fn = startTimer,
+                 .cancel_timer_fn = cancelTimer,
+@@ -875,6 +887,9 @@ pub const MacPlatform = struct {
+             .window_hide_on_close,
+             => true,
+             .context_menus => true,
++            .shortcut_capture => true,
++            // I-6 quarantine：异步权威 ACK 就绪前不得声明支持。
++            .screen_capture => false,
+             .native_views,
+             .native_control_commands,
+             .menus,
+@@ -1041,6 +1056,7 @@ fn appkitCallback(context: ?*anyopaque, event: *const AppKitEvent) callconv(.c)
+             .label = event.view_label[0..event.view_label_len],
+             .size = geometry.SizeF.init(@floatCast(event.width), @floatCast(event.height)),
+             .scale_factor = @floatCast(event.scale),
++            .window_chrome = if (state.self) |mac| windowChrome(mac, event.window_id) else .{},
+             .frame_index = event.frame_index,
+             .timestamp_ns = event.timestamp_ns,
+             .frame_interval_ns = event.frame_interval_ns,
+@@ -2442,6 +2458,26 @@ fn configureShortcuts(context: ?*anyopaque, shortcuts: []const platform_mod.Shor
+     native_sdk_appkit_set_shortcuts(self.host, ids[0..shortcuts.len].ptr, id_lens[0..shortcuts.len].ptr, keys[0..shortcuts.len].ptr, key_lens[0..shortcuts.len].ptr, modifiers[0..shortcuts.len].ptr, shortcuts.len);
+ }
+ 
++fn startShortcutCapture(context: ?*anyopaque) anyerror!void {
++    const self: *MacPlatform = @ptrCast(@alignCast(context.?));
++    native_sdk_appkit_start_shortcut_capture(self.host);
++}
++
++fn startScreenCapture(context: ?*anyopaque) anyerror!void {
++    const self: *MacPlatform = @ptrCast(@alignCast(context.?));
++    if (native_sdk_appkit_start_screen_capture(self.host) != 0) return error.UnsupportedService;
++}
++
++fn stopScreenCapture(context: ?*anyopaque) anyerror!void {
++    const self: *MacPlatform = @ptrCast(@alignCast(context.?));
++    native_sdk_appkit_stop_screen_capture(self.host);
++}
++
++fn stopShortcutCapture(context: ?*anyopaque) anyerror!void {
++    const self: *MacPlatform = @ptrCast(@alignCast(context.?));
++    native_sdk_appkit_stop_shortcut_capture(self.host);
++}
++
+ fn shortcutModifierFlags(modifiers: platform_mod.ShortcutModifiers) u32 {
+     var flags: u32 = 0;
+     if (modifiers.primary) flags |= shortcut_modifier_primary;
+diff --git a/src/platform/null_platform.zig b/src/platform/null_platform.zig
+index 986e1a5..826d0d7 100644
+--- a/src/platform/null_platform.zig
++++ b/src/platform/null_platform.zig
+@@ -482,10 +482,14 @@ pub const NullPlatform = struct {
+     /// native event's click count).
+     window_drag_starts: [max_windows * 4]WindowId = [_]WindowId{0} ** (max_windows * 4),
+     window_drag_start_count: usize = 0,
+-    /// Chrome overlay geometry `windowChrome` reports for every window
+-    /// — settable so tests model a hidden-titlebar macOS host (insets
+-    /// plus the traffic-light cluster frame).
++    /// Default chrome overlay geometry `windowChrome` reports — settable
++    /// so tests model a hidden-titlebar host without creating windows.
+     window_chrome: types.WindowChrome = .{},
++    /// Per-window overrides used by deterministic replay. A single global
++    /// value cannot represent interleaved frames from multiple windows.
++    window_chrome_ids: [max_windows]WindowId = [_]WindowId{0} ** max_windows,
++    window_chrome_values: [max_windows]types.WindowChrome = [_]types.WindowChrome{.{}} ** max_windows,
++    window_chrome_count: usize = 0,
+     /// The last drag-region mirror pushed through
+     /// `setWindowDragRegions` (the Windows `WM_NCHITTEST` seam), so
+     /// tests assert what a hit-testing platform would consult. One
+@@ -829,6 +833,21 @@ pub const NullPlatform = struct {
+         };
+     }
+ 
++    /// Install chrome for one replayed window without weakening the global
++    /// test seam. Repeated frames replace the same bounded slot.
++    pub fn setWindowChromeForWindow(self: *NullPlatform, window_id: WindowId, chrome: types.WindowChrome) !void {
++        for (self.window_chrome_ids[0..self.window_chrome_count], 0..) |known_id, index| {
++            if (known_id == window_id) {
++                self.window_chrome_values[index] = chrome;
++                return;
++            }
++        }
++        if (self.window_chrome_count >= self.window_chrome_ids.len) return error.WindowLimitReached;
++        self.window_chrome_ids[self.window_chrome_count] = window_id;
++        self.window_chrome_values[self.window_chrome_count] = chrome;
++        self.window_chrome_count += 1;
++    }
++
+     /// Heap-allocate the wrapper (process allocator) and initialize it
+     /// in place — the reference model of the real hosts'
+     /// `createWithOptions`. Runners must use this over a stack
+@@ -1033,6 +1052,8 @@ pub const NullPlatform = struct {
+             .microphone_capture => self.microphone_capture,
+             .system_audio_capture => self.system_audio_capture,
+             .video_playback => self.video_playback,
++            .shortcut_capture => false,
++            .screen_capture => false,
+         };
+     }
+ 
+@@ -1236,7 +1257,9 @@ pub const NullPlatform = struct {
+ 
+     fn windowChrome(context: ?*anyopaque, window_id: WindowId) types.WindowChrome {
+         const self: *NullPlatform = @ptrCast(@alignCast(context.?));
+-        _ = window_id;
++        for (self.window_chrome_ids[0..self.window_chrome_count], 0..) |known_id, index| {
++            if (known_id == window_id) return self.window_chrome_values[index];
++        }
+         return self.window_chrome;
+     }
+ 
+diff --git a/src/platform/types.zig b/src/platform/types.zig
+index a9672c2..6e05d47 100644
+--- a/src/platform/types.zig
++++ b/src/platform/types.zig
+@@ -189,6 +189,17 @@ pub const PlatformFeature = enum {
+     /// verbs with a teaching and `error.UnsupportedService` — named
+     /// unsupported, not half-implemented — and report false here.
+     video_playback,
++    /// Raw key+modifier capture stream for the keyboard-shortcuts
++    /// capture UI. Hosts that expose `start_shortcut_capture_fn` /
++    /// `stop_shortcut_capture_fn` report true; the null platform and
++    /// GTK report false and the service returns `error.UnsupportedService`
++    /// — capture is unavailable there, not silently faked.
++    shortcut_capture,
++    /// I-6 保留的 screen-capture wire id。当前生产 host 不绑定
++    /// start/stop service，中央 effect dispatcher 统一返回
++    /// `error.UnsupportedService`；compile-only ABI 不代表运行时支持，
++    /// 更不会触发 TCC 或伪造成功。
++    screen_capture,
+ };
+ 
+ pub const WebViewSourceKind = enum {
+@@ -1972,6 +1983,10 @@ pub const GpuSurfaceFrameEvent = struct {
+     label: []const u8,
+     size: geometry.SizeF,
+     scale_factor: f32 = 1,
++    /// Platform chrome sampled by the host for this frame. Runtime
++    /// layout consumes this value through `window_chrome_fn`, so it is
++    /// dispatch input rather than render telemetry and must replay.
++    window_chrome: WindowChrome = .{},
+     frame_index: u64 = 0,
+     timestamp_ns: u64 = 0,
+     frame_interval_ns: u64 = default_gpu_frame_interval_ns,
+@@ -2784,6 +2799,22 @@ pub const PlatformServices = struct {
+     configure_security_policy_fn: ?*const fn (context: ?*anyopaque, policy: security.Policy) anyerror!void = null,
+     configure_menus_fn: ?*const fn (context: ?*anyopaque, menus: []const Menu) anyerror!void = null,
+     configure_shortcuts_fn: ?*const fn (context: ?*anyopaque, shortcuts: []const Shortcut) anyerror!void = null,
++    /// Begin a raw key+modifier capture session. While active, the
++    /// platform intercepts every key-down and bare-modifier event and
++    /// emits it as a `.shortcut` event whose id is the sentinel
++    /// `__capture__` — registered shortcuts are suspended for the
++    /// capture's duration. Used by the keyboard-shortcuts capture UI to
++    /// record arbitrary combinations the registered-shortcut table
++    /// cannot represent ahead of time.
++    start_shortcut_capture_fn: ?*const fn (context: ?*anyopaque) anyerror!void = null,
++    stop_shortcut_capture_fn: ?*const fn (context: ?*anyopaque) anyerror!void = null,
++    /// I-6 compile-only service slots。生产 host 保持 null，中央
++    /// effect dispatcher 也不会调用；仅保留 wire/ABI 形状以便后续
++    /// 在具备异步权威 ACK、可消费 surface 与真实 TCC 流程后启用。
++    /// 直接调用便利方法因 null binding 返回 UnsupportedService，
++    /// 不得把下方同步 AppKit 原型视为可用产品能力。
++    start_screen_capture_fn: ?*const fn (context: ?*anyopaque) anyerror!void = null,
++    stop_screen_capture_fn: ?*const fn (context: ?*anyopaque) anyerror!void = null,
+     emit_window_event_fn: ?*const fn (context: ?*anyopaque, window_id: WindowId, name: []const u8, detail_json: []const u8) anyerror!void = null,
+     request_gpu_surface_frame_fn: ?*const fn (context: ?*anyopaque, window_id: WindowId, label: []const u8) anyerror!void = null,
+     /// Input was dispatched to the surface: hosts that throttle occluded
+@@ -3428,6 +3459,27 @@ pub const PlatformServices = struct {
+         return configure_fn(self.context, shortcuts);
+     }
+ 
++    // I-6 compile-only 便利方法；生产 binding 为 null，故 fail-closed。
++    pub fn startScreenCapture(self: PlatformServices) anyerror!void {
++        const start_fn = self.start_screen_capture_fn orelse return error.UnsupportedService;
++        return start_fn(self.context);
++    }
++
++    pub fn stopScreenCapture(self: PlatformServices) anyerror!void {
++        const stop_fn = self.stop_screen_capture_fn orelse return error.UnsupportedService;
++        return stop_fn(self.context);
++    }
++
++    pub fn startShortcutCapture(self: PlatformServices) anyerror!void {
++        const start_fn = self.start_shortcut_capture_fn orelse return error.UnsupportedService;
++        return start_fn(self.context);
++    }
++
++    pub fn stopShortcutCapture(self: PlatformServices) anyerror!void {
++        const stop_fn = self.stop_shortcut_capture_fn orelse return error.UnsupportedService;
++        return stop_fn(self.context);
++    }
++
+     pub fn emitWindowEvent(self: PlatformServices, window_id: WindowId, name: []const u8, detail_json: []const u8) anyerror!void {
+         const emit_fn = self.emit_window_event_fn orelse return error.UnsupportedService;
+         return emit_fn(self.context, window_id, name, detail_json);
+@@ -3745,6 +3797,9 @@ fn defaultSupportsFeature(services: PlatformServices, feature: PlatformFeature)
+         .menus => services.configure_menus_fn != null,
+         .tray => services.create_tray_fn != null,
+         .shortcuts => services.configure_shortcuts_fn != null,
++        .shortcut_capture => services.start_shortcut_capture_fn != null and services.stop_shortcut_capture_fn != null,
++        // I-6 quarantine：默认能力同样固定 false；解除中央硬门时再恢复。
++        .screen_capture => false,
+         .dialogs => services.show_open_dialog_fn != null or services.show_save_dialog_fn != null or services.show_message_dialog_fn != null,
+         .clipboard_text => services.read_clipboard_fn != null and services.write_clipboard_fn != null,
+         .clipboard_rich_data => services.read_clipboard_data_fn != null and services.write_clipboard_data_fn != null,
+diff --git a/src/platform/windows/root.zig b/src/platform/windows/root.zig
+index 9a559a8..d9f73eb 100644
+--- a/src/platform/windows/root.zig
++++ b/src/platform/windows/root.zig
+@@ -152,6 +152,8 @@ extern fn native_sdk_windows_emit_window_event(host: *WindowsHost, window_id: u6
+ extern fn native_sdk_windows_set_security_policy(host: *WindowsHost, allowed_origins: [*]const u8, allowed_origins_len: usize, external_urls: [*]const u8, external_urls_len: usize, external_action: c_int) void;
+ extern fn native_sdk_windows_set_menus(host: *WindowsHost, menu_titles: [*]const [*]const u8, menu_title_lens: [*]const usize, menu_count: usize, item_menu_indices: [*]const u32, item_labels: [*]const [*]const u8, item_label_lens: [*]const usize, item_commands: [*]const [*]const u8, item_command_lens: [*]const usize, item_keys: [*]const [*]const u8, item_key_lens: [*]const usize, item_modifiers: [*]const u32, item_separators: [*]const c_int, item_enabled: [*]const c_int, item_checked: [*]const c_int, item_count: usize) c_int;
+ extern fn native_sdk_windows_set_shortcuts(host: *WindowsHost, ids: [*]const [*]const u8, id_lens: [*]const usize, keys: [*]const [*]const u8, key_lens: [*]const usize, modifiers: [*]const u32, count: usize) void;
++extern fn native_sdk_windows_start_shortcut_capture(host: *WindowsHost) void;
++extern fn native_sdk_windows_stop_shortcut_capture(host: *WindowsHost) void;
+ extern fn native_sdk_windows_create_window(host: *WindowsHost, window_id: u64, window_title: [*]const u8, window_title_len: usize, window_label: [*]const u8, window_label_len: usize, x: f64, y: f64, width: f64, height: f64, restore_frame: c_int, initial_placement: c_int, restore_policy: c_int, resizable: c_int, titlebar_style: c_int, min_width: f64, min_height: f64, show_policy: c_int, window_flags: u32) c_int;
+ extern fn native_sdk_windows_start_window_drag(host: *WindowsHost, window_id: u64) c_int;
+ extern fn native_sdk_windows_set_window_drag_regions(host: *WindowsHost, window_id: u64, label: [*]const u8, label_len: usize, rects: [*]const f64, exclusions: [*]const c_int, count: usize) c_int;
+@@ -496,6 +498,8 @@ pub const WindowsPlatform = struct {
+                 .configure_security_policy_fn = configureSecurityPolicy,
+                 .configure_menus_fn = configureMenus,
+                 .configure_shortcuts_fn = configureShortcuts,
++                .start_shortcut_capture_fn = startShortcutCapture,
++                .stop_shortcut_capture_fn = stopShortcutCapture,
+                 .emit_window_event_fn = emitWindowEvent,
+                 .start_timer_fn = startTimer,
+                 .cancel_timer_fn = cancelTimer,
+@@ -557,6 +561,8 @@ pub const WindowsPlatform = struct {
+             // are macOS-only today; Win32 keeps the engine's wheel
+             // physics.
+             .gpu_surface_scroll_drivers, .view_surface_adoption => false,
++            .shortcut_capture => true,
++            .screen_capture => false,
+             // Video decode (a Media Foundation session feeding the
+             // media-surface texture channel) is not implemented yet:
+             // an honest false rather than a half-implemented player.
+@@ -685,7 +691,11 @@ fn windowsCallback(context: ?*anyopaque, event: *const WindowsEvent) callconv(.c
+             .name = event.command_name[0..event.command_name_len],
+             .window_id = event.window_id,
+         } }),
+-        .gpu_surface_frame => state.emit(.{ .gpu_surface_frame = gpuSurfaceFrameEventFromWindowsEvent(event) }),
++        .gpu_surface_frame => {
++            var frame_event = gpuSurfaceFrameEventFromWindowsEvent(event);
++            frame_event.window_chrome = if (state.self) |windows| windowChrome(windows, event.window_id) else .{};
++            state.emit(.{ .gpu_surface_frame = frame_event });
++        },
+         .gpu_surface_resize => state.emit(.{ .gpu_surface_resized = .{
+             .window_id = event.window_id,
+             .label = event.view_label[0..event.view_label_len],
+@@ -1936,6 +1946,16 @@ fn configureShortcuts(context: ?*anyopaque, shortcuts: []const platform_mod.Shor
+     native_sdk_windows_set_shortcuts(self.host, ids[0..shortcuts.len].ptr, id_lens[0..shortcuts.len].ptr, keys[0..shortcuts.len].ptr, key_lens[0..shortcuts.len].ptr, modifiers[0..shortcuts.len].ptr, shortcuts.len);
+ }
+ 
++fn startShortcutCapture(context: ?*anyopaque) anyerror!void {
++    const self: *WindowsPlatform = @ptrCast(@alignCast(context.?));
++    native_sdk_windows_start_shortcut_capture(self.host);
++}
++
++fn stopShortcutCapture(context: ?*anyopaque) anyerror!void {
++    const self: *WindowsPlatform = @ptrCast(@alignCast(context.?));
++    native_sdk_windows_stop_shortcut_capture(self.host);
++}
++
+ fn shortcutModifierFlags(modifiers: platform_mod.ShortcutModifiers) u32 {
+     var flags: u32 = 0;
+     if (modifiers.primary) flags |= shortcut_modifier_primary;
+diff --git a/src/platform/windows/webview2_host.cpp b/src/platform/windows/webview2_host.cpp
+index d811823..dcab54e 100644
+--- a/src/platform/windows/webview2_host.cpp
++++ b/src/platform/windows/webview2_host.cpp
+@@ -710,6 +710,12 @@ struct Host {
+     std::vector<std::string> allowed_origins;
+     std::vector<std::string> allowed_external_urls;
+     std::vector<Shortcut> shortcuts;
++    // While true, WM_KEYDOWN/WM_SYSKEYDOWN are emitted as `__capture__`-id
++    // shortcut events with live modifier flags and swallowed; registered
++    // shortcut matching is skipped for the capture's duration. Toggled by
++    // native_sdk_windows_start_shortcut_capture / _stop_shortcut_capture.
++    bool shortcut_capture_mode = false;
++    uint64_t shortcut_capture_window_id = 0;
+     std::vector<Menu> menus;
+     std::map<uint32_t, std::string> menu_commands;
+     std::vector<TrayItem> tray_items;
+@@ -1467,6 +1473,26 @@ static const Window *windowForHwnd(Host *host, HWND hwnd) {
+     return nullptr;
+ }
+ 
++static void stopShortcutCaptureState(Host *host) {
++    if (!host) return;
++    host->shortcut_capture_mode = false;
++    host->shortcut_capture_window_id = 0;
++}
++
++static bool isShortcutModifierKey(WPARAM wparam) {
++    return wparam == VK_SHIFT || wparam == VK_LSHIFT || wparam == VK_RSHIFT ||
++        wparam == VK_CONTROL || wparam == VK_LCONTROL || wparam == VK_RCONTROL ||
++        wparam == VK_MENU || wparam == VK_LMENU || wparam == VK_RMENU ||
++        wparam == VK_LWIN || wparam == VK_RWIN;
++}
++
++static void stopShortcutCaptureIfFocusLeavesOwner(Host *host, HWND next_focus) {
++    if (!host || !host->shortcut_capture_mode) return;
++    const Window *owner = windowForId(host, host->shortcut_capture_window_id);
++    HWND next_root = next_focus ? GetAncestor(next_focus, GA_ROOT) : nullptr;
++    if (!owner || !owner->hwnd || next_root != owner->hwnd) stopShortcutCaptureState(host);
++}
++
+ static std::string shortcutKeyLabel(const std::string &key) {
+     if (key.size() == 1) {
+         char ch = key[0];
+@@ -1711,6 +1737,63 @@ static bool emitShortcutForWindowId(Host *host, uint64_t window_id, WPARAM wpara
+     return emitShortcutForWindow(host, windowForId(host, window_id), wparam);
+ }
+ 
++// Emit one captured key as a `__capture__`-id shortcut event with the
++// live modifier flags. Returns true when an event was emitted (the
++// caller then swallows the WM_KEYDOWN). A bare modifier key (VK_SHIFT,
++// VK_CONTROL, VK_MENU, VK_LWIN/VK_RWIN) is reported with an empty key
++// string so the capture UI sees the modifier state change without
++// confusing it with a real keystroke.
++static bool emitCapturedShortcut(Host *host, const Window *window, WPARAM wparam) {
++    if (!host || !window || !host->callback) return false;
++    std::string key = shortcutKeyFromWParam(wparam);
++    bool is_bare_modifier = wparam == VK_SHIFT || wparam == VK_CONTROL ||
++        wparam == VK_MENU || wparam == VK_LWIN || wparam == VK_RWIN;
++    if (is_bare_modifier) key.clear();
++    WindowsEvent event = {};
++    event.kind = kShortcut;
++    event.window_id = window->id;
++    static const char kCaptureId[] = "__capture__";
++    event.shortcut_id = kCaptureId;
++    event.shortcut_id_len = sizeof(kCaptureId) - 1;
++    event.shortcut_key = key.c_str();
++    event.shortcut_key_len = key.size();
++    event.shortcut_modifiers = gpuModifierFlags();
++    host->callback(host->callback_context, &event);
++    return true;
++}
++
++
++// Consume one event for the owning SDK window while capture is active.
++// Modifier down/up transitions preview state; Escape cancels; repeats are
++// swallowed; the first non-modifier key-down stops capture before emitting so
++// a re-entrant callback cannot accept a second chord.
++static bool handleShortcutCaptureKey(
++    Host *host,
++    const Window *window,
++    WPARAM wparam,
++    bool key_down,
++    bool repeat
++) {
++    if (!host || !host->shortcut_capture_mode) return false;
++    if (!window || window->id != host->shortcut_capture_window_id || !window->hwnd) {
++        stopShortcutCaptureState(host);
++        return false;
++    }
++    if (key_down && wparam == VK_ESCAPE) {
++        stopShortcutCaptureState(host);
++        return true;
++    }
++    if (isShortcutModifierKey(wparam)) {
++        (void)emitCapturedShortcut(host, window, wparam);
++        return true;
++    }
++    if (!key_down || repeat) return true;
++    if (shortcutKeyFromWParam(wparam).empty()) return true;
++    stopShortcutCaptureState(host);
++    (void)emitCapturedShortcut(host, window, wparam);
++    return true;
++}
++
+ static std::string webViewKey(uint64_t window_id, const std::string &label) {
+     return std::to_string(window_id) + ":" + label;
+ }
+@@ -3511,6 +3594,12 @@ static LRESULT CALLBACK gpuSurfaceProc(HWND hwnd, UINT message, WPARAM wparam, L
+         }
+         case WM_KEYDOWN:
+         case WM_SYSKEYDOWN: {
++            if (handleShortcutCaptureKey(
++                    host,
++                    windowForHwnd(host, GetAncestor(hwnd, GA_ROOT)),
++                    wparam,
++                    true,
++                    (lparam & (static_cast<LPARAM>(1) << 30)) != 0)) return 0;
+             /* A fresh keystroke re-disarms the one-shot: a shortcut that
+              * translated to no WM_CHAR (F-keys) must not leave it armed
+              * to eat a later ordinary character. */
+@@ -3531,6 +3620,12 @@ static LRESULT CALLBACK gpuSurfaceProc(HWND hwnd, UINT message, WPARAM wparam, L
+         }
+         case WM_KEYUP:
+         case WM_SYSKEYUP: {
++            if (handleShortcutCaptureKey(
++                    host,
++                    windowForHwnd(host, GetAncestor(hwnd, GA_ROOT)),
++                    wparam,
++                    false,
++                    false)) return 0;
+             /* The shortcut keystroke's translated burst ended with its
+              * release: disarm the char latch (see gpuSurfaceCharInput). */
+             view->gpu_shortcut_ate_char = false;
+@@ -3574,6 +3669,7 @@ static LRESULT CALLBACK gpuSurfaceProc(HWND hwnd, UINT message, WPARAM wparam, L
+             }
+             return 0;
+         case WM_KILLFOCUS:
++            stopShortcutCaptureIfFocusLeavesOwner(host, reinterpret_cast<HWND>(wparam));
+             /* Mirror AppKit (unmarkText on resign) and GTK (focus-out
+              * resets the IM context): composition cannot outlive focus. */
+             if (!view->gpu_ime_preedit.empty()) {
+@@ -5392,6 +5488,12 @@ static bool createChildWebView(Host *host, const std::string &key) {
+                                 if (kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN) return S_OK;
+                                 UINT virtual_key = 0;
+                                 if (FAILED(args->get_VirtualKey(&virtual_key))) return S_OK;
++                                COREWEBVIEW2_PHYSICAL_KEY_STATUS physical_status = {};
++                                const bool repeat = SUCCEEDED(args->get_PhysicalKeyStatus(&physical_status)) && physical_status.WasKeyDown;
++                                if (handleShortcutCaptureKey(host, windowForId(host, accelerator_window_id), virtual_key, true, repeat)) {
++                                    args->put_Handled(TRUE);
++                                    return S_OK;
++                                }
+                                 if (emitShortcutForWindowId(host, accelerator_window_id, virtual_key)) {
+                                     args->put_Handled(TRUE);
+                                 }
+@@ -5731,7 +5833,19 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wparam, LPARA
+             break;
+         case WM_KEYDOWN:
+         case WM_SYSKEYDOWN:
+-            if (host && emitShortcutForHwnd(host, hwnd, wparam)) return 0;
++            if (host) {
++                if (handleShortcutCaptureKey(
++                        host,
++                        windowForHwnd(host, hwnd),
++                        wparam,
++                        true,
++                        (lparam & (static_cast<LPARAM>(1) << 30)) != 0)) return 0;
++                if (emitShortcutForHwnd(host, hwnd, wparam)) return 0;
++            }
++            break;
++        case WM_KEYUP:
++        case WM_SYSKEYUP:
++            if (handleShortcutCaptureKey(host, windowForHwnd(host, hwnd), wparam, false, false)) return 0;
+             break;
+         case WM_COMMAND:
+             if (host) {
+@@ -5748,6 +5862,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wparam, LPARA
+         case WM_ACTIVATEAPP:
+             if (host) {
+                 bool active = wparam != FALSE;
++                if (!active) stopShortcutCaptureState(host);
+                 if (host->app_active != active) {
+                     host->app_active = active;
+                     for (auto &entry : host->windows) {
+@@ -5811,8 +5926,16 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wparam, LPARA
+                 }
+             }
+             return 0;
+-        case WM_SETFOCUS:
+         case WM_KILLFOCUS:
++            stopShortcutCaptureIfFocusLeavesOwner(host, reinterpret_cast<HWND>(wparam));
++            if (host) {
++                HWND root = GetAncestor(hwnd, GA_ROOT);
++                for (auto &entry : host->windows) {
++                    if (entry.second.hwnd == root) emit(host, entry.second, kWindowFrame);
++                }
++            }
++            return 0;
++        case WM_SETFOCUS:
+             if (host) {
+                 /* Native child views own Win32 focus directly. Project
+                  * their focus edges onto the owning top-level window so
+@@ -5945,6 +6068,9 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wparam, LPARA
+              * (native_sdk_windows_close_window) and bypass this hook. */
+             if (host) {
+                 for (auto &entry : host->windows) {
++                    if (entry.second.hwnd == hwnd && host->shortcut_capture_window_id == entry.first) {
++                        stopShortcutCaptureState(host);
++                    }
+                     if (entry.second.hwnd == hwnd && entry.second.close_policy == 1) {
+                         /* The hide is honest only while a tray icon is
+                          * live: SW_HIDE removes the taskbar entry and
+@@ -5975,6 +6101,7 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wparam, LPARA
+             if (host) {
+                 for (auto &entry : host->windows) {
+                     if (entry.second.hwnd == hwnd) {
++                        if (host->shortcut_capture_window_id == entry.first) stopShortcutCaptureState(host);
+                         destroyNativeViewsForWindow(host, entry.first);
+                         destroyChildWebViewsForWindow(host, entry.first);
+                         entry.second.hwnd = nullptr;
+@@ -6578,6 +6705,22 @@ void native_sdk_windows_set_shortcuts(Host *host, const char *const *ids, const
+     }
+ }
+ 
++void native_sdk_windows_start_shortcut_capture(Host *host) {
++    if (!host) return;
++    HWND foreground = GetForegroundWindow();
++    const Window *owner = windowForHwnd(host, foreground ? GetAncestor(foreground, GA_ROOT) : nullptr);
++    if (!owner || !owner->hwnd) {
++        stopShortcutCaptureState(host);
++        return;
++    }
++    host->shortcut_capture_window_id = owner->id;
++    host->shortcut_capture_mode = true;
++}
++
++void native_sdk_windows_stop_shortcut_capture(Host *host) {
++    stopShortcutCaptureState(host);
++}
++
+ int native_sdk_windows_create_window(Host *host, uint64_t window_id, const char *window_title, size_t window_title_len, const char *window_label, size_t window_label_len, double x, double y, double width, double height, int restore_frame, int initial_placement, int restore_policy, int resizable, int titlebar_style, double min_width, double min_height, int show_policy, uint32_t window_flags) {
+     (void)restore_frame;
+     (void)initial_placement;
+diff --git a/src/primitives/canvas/widget_render_style.zig b/src/primitives/canvas/widget_render_style.zig
+index ff01f76..99d3986 100644
+--- a/src/primitives/canvas/widget_render_style.zig
++++ b/src/primitives/canvas/widget_render_style.zig
+@@ -545,6 +545,8 @@ pub fn textInputControlVisualTokens(widget: Widget, tokens: DesignTokens) Contro
+ }
+ 
+ pub fn textInputFill(widget: Widget, tokens: DesignTokens, visual: ControlVisualTokens) Fill {
++    // An author-stated background remains the strongest visual contract.
++    if (widget.style.background) |background| return colorFill(background);
+     if (widget.state.disabled) {
+         if (visual.disabled_background) |color| return colorFill(color);
+         const rest = restStateWidget(widget);
+diff --git a/src/primitives/canvas/widget_runtime_tests.zig b/src/primitives/canvas/widget_runtime_tests.zig
+index be7bbd4..447382f 100644
+--- a/src/primitives/canvas/widget_runtime_tests.zig
++++ b/src/primitives/canvas/widget_runtime_tests.zig
+@@ -3011,6 +3011,87 @@ test "input-group focus change dirties the group's ring region" {
+     try std.testing.expect(dirty.maxY() >= ring.maxY());
+ }
+ 
++test "disabled input-group entry keeps explicit transparent chrome while standalone fields keep disabled fill" {
++    const transparent = Color.rgba8(0, 0, 0, 0);
++    const disabled_fill = Color.rgb8(51, 51, 51);
++    const tokens = DesignTokens{
++        .colors = .{
++            .surface = Color.rgb8(40, 40, 40),
++            .disabled = disabled_fill,
++            .border = Color.rgb8(80, 80, 80),
++            .text = Color.rgb8(245, 245, 245),
++            .text_muted = Color.rgb8(168, 168, 168),
++        },
++        .controls = .{
++            .textarea = .{
++                .background = Color.rgb8(40, 40, 40),
++                .disabled_background = disabled_fill,
++                .border = Color.rgb8(80, 80, 80),
++            },
++        },
++    };
++    const group_children = [_]Widget{.{
++        .id = 3,
++        .kind = .textarea,
++        .frame = geometry.RectF.init(4, 4, 192, 60),
++        .state = .{ .disabled = true },
++        .style = .{
++            .background = transparent,
++            .border = transparent,
++            .focus_ring = transparent,
++        },
++    }};
++    const grouped = [_]Widget{.{
++        .id = 2,
++        .kind = .input_group,
++        .frame = geometry.RectF.init(0, 0, 200, 72),
++        .children = &group_children,
++    }};
++    var grouped_nodes: [3]WidgetLayoutNode = undefined;
++    const grouped_layout = try layoutWidgetTree(.{ .kind = .stack, .children = &grouped }, geometry.RectF.init(0, 0, 220, 90), &grouped_nodes);
++    var grouped_commands: [24]CanvasCommand = undefined;
++    var grouped_builder = Builder.init(&grouped_commands);
++    try grouped_layout.emitDisplayListWithState(&grouped_builder, tokens, .{});
++    var saw_transparent_child = false;
++    for (grouped_builder.displayList().commands) |command| {
++        if (command.objectId()) |id| {
++            if (id == widgetPartId(3, 1)) switch (command) {
++                .fill_rounded_rect => |fill| {
++                    try expectFillColor(transparent, fill.fill);
++                    saw_transparent_child = true;
++                },
++                else => {},
++            };
++        }
++    }
++    try std.testing.expect(saw_transparent_child);
++
++    const standalone = [_]Widget{.{
++        .id = 4,
++        .kind = .textarea,
++        .frame = geometry.RectF.init(0, 0, 200, 72),
++        .state = .{ .disabled = true },
++    }};
++    var standalone_nodes: [2]WidgetLayoutNode = undefined;
++    const standalone_layout = try layoutWidgetTree(.{ .kind = .stack, .children = &standalone }, geometry.RectF.init(0, 0, 220, 90), &standalone_nodes);
++    var standalone_commands: [16]CanvasCommand = undefined;
++    var standalone_builder = Builder.init(&standalone_commands);
++    try standalone_layout.emitDisplayListWithState(&standalone_builder, tokens, .{});
++    var saw_disabled_standalone = false;
++    for (standalone_builder.displayList().commands) |command| {
++        if (command.objectId()) |id| {
++            if (id == widgetPartId(4, 1)) switch (command) {
++                .fill_rounded_rect => |fill| {
++                    try expectFillColor(disabled_fill, fill.fill);
++                    saw_disabled_standalone = true;
++                },
++                else => {},
++            };
++        }
++    }
++    try std.testing.expect(saw_disabled_standalone);
++}
++
+ test "widget layer tokens order display emission and hit testing" {
+     const children = [_]Widget{
+         .{
+diff --git a/src/runtime/api.zig b/src/runtime/api.zig
+index 50dbbcc..05fce4f 100644
+--- a/src/runtime/api.zig
++++ b/src/runtime/api.zig
+@@ -554,4 +554,23 @@ pub const Options = struct {
+     /// fingerprint checkpoint. The app runner arms this from
+     /// `NATIVE_SDK_SESSION_RECORD=<path>`.
+     session_recorder: ?*runtime_session_record.SessionRecorder = null,
++    /// Canvas widget ids whose committed input must never be persisted in a
++    /// session journal. Live dispatch still runs, but recording fails closed
++    /// before the raw event is staged and therefore remains unsealed.
++    secure_canvas_widget_ids: []const canvas.ObjectId = &.{},
+ };
++
++/// True when text-bearing input targets a widget whose committed value must
++/// never enter the session recorder. Platform and direct accessibility paths
++/// share this predicate so a new verb surface cannot bypass the secure list.
++pub fn isSecureCanvasWidgetText(secure_ids: []const canvas.ObjectId, id: canvas.ObjectId, text: []const u8) bool {
++    _ = text;
++    return isSecureCanvasWidgetId(secure_ids, id);
++}
++
++pub fn isSecureCanvasWidgetId(secure_ids: []const canvas.ObjectId, id: canvas.ObjectId) bool {
++    for (secure_ids) |secure_id| {
++        if (secure_id == id) return true;
++    }
++    return false;
++}
+diff --git a/src/runtime/automation_widget_dispatch.zig b/src/runtime/automation_widget_dispatch.zig
+index c711705..54c90e5 100644
+--- a/src/runtime/automation_widget_dispatch.zig
++++ b/src/runtime/automation_widget_dispatch.zig
+@@ -701,7 +701,13 @@ pub fn RuntimeAutomationWidgetDispatch(comptime Runtime: type) type {
+             };
+             // Same observability contract as selectAutomationCanvasWidget:
+             // the repaint this edit triggers must publish its completing
+-            // frame, so record the automation input it resolves.
++            // frame. Direct automation edits never pass through the host's
++            // platform-input callback, so notify the pacing seam explicitly
++            // before recording the automation input it resolves.
++            self.options.platform.services.noteGpuSurfaceInput(
++                self.views[view_index].window_id,
++                self.views[view_index].label,
++            ) catch {};
+             self.views[view_index].recordGpuSurfaceInputTimestamp(automationInputTimestampNs());
+             try CanvasWidgetEventMethods().updateCanvasWidgetTextFromKeyboard(self, &keyboard_event);
+             try self.dispatchEvent(app, .{ .canvas_widget_keyboard = keyboard_event });
+diff --git a/src/runtime/canvas_widget_event_tests.zig b/src/runtime/canvas_widget_event_tests.zig
+index 99123ea..cadfa87 100644
+--- a/src/runtime/canvas_widget_event_tests.zig
++++ b/src/runtime/canvas_widget_event_tests.zig
+@@ -65,6 +65,57 @@ const builtinBridgeErrorMessage = support.builtinBridgeErrorMessage;
+ const testViewByLabel = support.testViewByLabel;
+ const testCanvasWidgetPartId = support.testCanvasWidgetPartId;
+ 
++test "automation canvas text edit notifies the host input pacing seam" {
++    const NoteProbe = struct {
++        var count: usize = 0;
++        var last_window_id: platform.WindowId = 0;
++        var last_label_matches: bool = false;
++
++        fn note(context: ?*anyopaque, window_id: platform.WindowId, label: []const u8) anyerror!void {
++            _ = context;
++            count += 1;
++            last_window_id = window_id;
++            last_label_matches = std.mem.eql(u8, label, "canvas");
++        }
++    };
++    const TestApp = struct {
++        fn app(self: *@This()) App {
++            return .{ .context = self, .name = "gpu-widget-automation-input-pacing", .source = platform.WebViewSource.html("<h1>GPU</h1>") };
++        }
++    };
++
++    NoteProbe.count = 0;
++    NoteProbe.last_window_id = 0;
++    NoteProbe.last_label_matches = false;
++    const harness = try TestHarness().create(std.testing.allocator, .{});
++    defer harness.destroy(std.testing.allocator);
++    harness.null_platform.gpu_surfaces = true;
++    var app_state: TestApp = .{};
++    const app = app_state.app();
++    try harness.start(app);
++
++    _ = try harness.runtime.createView(.{
++        .window_id = 1,
++        .label = "canvas",
++        .kind = .gpu_surface,
++        .frame = geometry.RectF.init(0, 0, 240, 120),
++    });
++    var nodes: [2]canvas.WidgetLayoutNode = undefined;
++    const layout = try canvas.layoutWidgetTree(
++        .{ .id = 1, .kind = .panel, .children = &.{.{ .id = 2, .kind = .text_field, .frame = geometry.RectF.init(12, 16, 160, 36), .text = "Draft" }} },
++        geometry.RectF.init(0, 0, 240, 120),
++        &nodes,
++    );
++    _ = try harness.runtime.setCanvasWidgetLayout(1, "canvas", layout);
++    harness.runtime.options.platform.services.note_gpu_surface_input_fn = NoteProbe.note;
++
++    try dispatchAutomationWidgetAction(&harness.runtime, app, .{ .view_label = "canvas", .id = 2, .action = .set_selection, .value = "0 3" });
++
++    try std.testing.expectEqual(@as(usize, 1), NoteProbe.count);
++    try std.testing.expectEqual(@as(platform.WindowId, 1), NoteProbe.last_window_id);
++    try std.testing.expect(NoteProbe.last_label_matches);
++}
++
+ test "runtime tracks retained canvas widget cursor intent" {
+     const TestApp = struct {
+         fn app(self: *@This()) App {
+diff --git a/src/runtime/canvas_widget_state.zig b/src/runtime/canvas_widget_state.zig
+index 11296ed..e7855b6 100644
+--- a/src/runtime/canvas_widget_state.zig
++++ b/src/runtime/canvas_widget_state.zig
+@@ -304,15 +304,25 @@ pub fn RuntimeCanvasWidgetState(comptime Runtime: type) type {
+             // the verb still write through ahead of the record, and
+             // event_count/checkpoint ordinals only ever see the one
+             // surviving record (checkpoints fire at staging depth 0).
+-            if (self.options.session_recorder) |recorder| recorder.stageEvent(.{ .widget_accessibility_action = .{
+-                .window_id = window_id,
+-                .label = label,
+-                .id = action.id,
+-                .action = platformWidgetAccessibilityActionKindFromCanvas(action.action),
+-                .text = action.text,
+-                .selection = if (action.selection) |selection| .{ .start = selection.anchor, .end = selection.focus } else null,
+-            } });
+-            defer if (self.options.session_recorder) |recorder| recorder.commitEvent();
++            var session_event_staged = false;
++            if (self.options.session_recorder) |recorder| {
++                if (runtime_api.isSecureCanvasWidgetText(self.options.secure_canvas_widget_ids, action.id, action.text)) {
++                    recorder.rejectSecureInput();
++                } else {
++                    recorder.stageEvent(.{ .widget_accessibility_action = .{
++                        .window_id = window_id,
++                        .label = label,
++                        .id = action.id,
++                        .action = platformWidgetAccessibilityActionKindFromCanvas(action.action),
++                        .text = action.text,
++                        .selection = if (action.selection) |selection| .{ .start = selection.anchor, .end = selection.focus } else null,
++                    } });
++                    session_event_staged = true;
++                }
++            }
++            defer if (self.options.session_recorder) |recorder| {
++                if (session_event_staged) recorder.commitEvent();
++            };
+ 
+             // Every assistive action rides the SAME machinery the
+             // automation widget verbs use — the key-driven activation for
+@@ -999,10 +1009,20 @@ pub fn RuntimeCanvasWidgetState(comptime Runtime: type) type {
+             return canvas.textGeometryForWidget(node.widget, self.views[index].widget_tokens);
+         }
+ 
++        pub fn canvasWidgetTextEditState(self: *const Runtime, window_id: platform.WindowId, label: []const u8, id: canvas.ObjectId) anyerror!canvas.TextEditState {
++            try validateRuntimeViewParent(self, window_id);
++            try validateViewLabel(label);
++            if (id == 0) return error.InvalidCommand;
++            const index = runtimeFindViewIndex(self, window_id, label) orelse return error.ViewNotFound;
++            if (self.views[index].kind != .gpu_surface) return error.InvalidViewOptions;
++            return self.views[index].canvasWidgetTextEditState(id) orelse error.InvalidCommand;
++        }
++
+         pub fn editCanvasWidgetText(self: *Runtime, window_id: platform.WindowId, label: []const u8, id: canvas.ObjectId, edit: canvas.TextInputEvent) anyerror!platform.ViewInfo {
+             try validateRuntimeViewParent(self, window_id);
+             try validateViewLabel(label);
+             if (id == 0) return error.InvalidCommand;
++            if (runtime_api.isSecureCanvasWidgetId(self.options.secure_canvas_widget_ids, id)) return error.InvalidCommand;
+             const index = runtimeFindViewIndex(self, window_id, label) orelse return error.ViewNotFound;
+             if (self.views[index].kind != .gpu_surface) return error.InvalidViewOptions;
+             if (!self.views[index].canEditCanvasWidgetText(id)) return error.InvalidCommand;
+diff --git a/src/runtime/core.zig b/src/runtime/core.zig
+index c86d407..68bdc79 100644
+--- a/src/runtime/core.zig
++++ b/src/runtime/core.zig
+@@ -969,6 +969,7 @@ pub const Runtime = struct {
+     pub const setCanvasWidgetDesignTokens = CanvasWidgetStateMethods.setCanvasWidgetDesignTokens;
+     pub const canvasWidgetDesignTokens = CanvasWidgetStateMethods.canvasWidgetDesignTokens;
+     pub const canvasWidgetTextGeometry = CanvasWidgetStateMethods.canvasWidgetTextGeometry;
++    pub const canvasWidgetTextEditState = CanvasWidgetStateMethods.canvasWidgetTextEditState;
+     pub const editCanvasWidgetText = CanvasWidgetStateMethods.editCanvasWidgetText;
+ 
+     const CanvasWidgetDisplayMethods = runtime_canvas_widget_display.RuntimeCanvasWidgetDisplay(Runtime);
+diff --git a/src/runtime/effects.zig b/src/runtime/effects.zig
+index ce420b0..d134e42 100644
+--- a/src/runtime/effects.zig
++++ b/src/runtime/effects.zig
+@@ -470,6 +470,115 @@ pub const WindowActionState = struct {
+     }
+ };
+ 
++/// The platform-feature identifiers carried by `Cmd.platformFeature`
++/// (wire byte values). These mirror `rt.PlatformFeature` 1:1 — the rt
++/// kernel owns the cmd-builder side, this runtime owns the dispatch
++/// side, and the wire bytes are the contract between them. A new
++/// feature id bumps `cmd_format_version` (the wire contract).
++pub const PlatformFeatureId = enum(u8) {
++    shortcut_capture = 0x01,
++    // I-4: Carbon RegisterEventHotKey — 全局热键（应用未激活时唤醒）。
++    global_hotkey = 0x02,
++    // I-5: 动态 keymap apply — 运行时持久化绑定热更新。
++    configure_shortcuts = 0x03,
++    // I-6 ScreenCaptureKit 扩展：屏幕捕获流（start/stop）。
++    // 与 shortcut_capture 共享 PlatformFeatureVerb（start/stop），
++    // 但路由到 PlatformServices.startScreenCapture/stopScreenCapture。
++    // 新 feature id 是 wire-format break，需 cmd_format_version bump。
++    screen_capture = 0x04,
++};
++
++/// The platform-feature verbs carried by `Cmd.platformFeature` (wire
++/// byte values). These mirror `rt.PlatformFeatureVerb` 1:1. A new verb
++/// bumps `cmd_format_version`.
++pub const PlatformFeatureVerb = enum(u8) {
++    start = 0x01,
++    stop = 0x02,
++    // I-4: global_hotkey 注册/注销。
++    register = 0x03,
++    unregister = 0x04,
++    // I-5: configure_shortcuts 应用持久化绑定。
++    apply = 0x05,
++};
++
++/// The platform-feature mirror: observable state for every
++/// `Cmd.platformFeature` trigger made through the channel, recorded
++/// before the runtime call (and INSTEAD of it under the fake executor —
++/// hermetic tests pin the counts, live runs also perform the verb). The
++/// mirror is per-feature-per-verb so a regression can assert exactly
++/// which (feature, verb) rode the channel without inspecting the
++/// platform's own capture state.
++pub const PlatformFeatureOutcome = enum {
++    not_executed,
++    succeeded,
++    unsupported,
++    failed,
++};
++
++/// The platform-feature mirror: observable state for every
++/// `Cmd.platformFeature` trigger made through the channel, recorded
++/// before the runtime call (and INSTEAD of it under the fake executor —
++/// hermetic tests pin the counts, live runs also perform the verb). The
++/// mirror is per-feature-per-verb so a regression can assert exactly
++/// which (feature, verb) rode the channel without inspecting the
++/// platform's own capture state.
++pub const PlatformFeatureState = struct {
++    shortcut_capture_start_count: u32 = 0,
++    shortcut_capture_stop_count: u32 = 0,
++    // I-4: global_hotkey register/unregister 计数。
++    global_hotkey_register_count: u32 = 0,
++    global_hotkey_unregister_count: u32 = 0,
++    // I-5: configure_shortcuts apply 计数。
++    configure_shortcuts_apply_count: u32 = 0,
++    // I-6 ScreenCaptureKit 扩展：screen_capture 的 start/stop 计数，
++    // 与 shortcut_capture 同构，per-feature-per-verb 镜像。
++    screen_capture_start_count: u32 = 0,
++    screen_capture_stop_count: u32 = 0,
++    succeeded_count: u32 = 0,
++    unsupported_count: u32 = 0,
++    failed_count: u32 = 0,
++    last_outcome: PlatformFeatureOutcome = .not_executed,
++
++    pub fn record(
++        self: *PlatformFeatureState,
++        feature: PlatformFeatureId,
++        verb: PlatformFeatureVerb,
++    ) void {
++        self.last_outcome = .not_executed;
++        switch (feature) {
++            .shortcut_capture => switch (verb) {
++                .start => self.shortcut_capture_start_count += 1,
++                .stop => self.shortcut_capture_stop_count += 1,
++                else => {},
++            },
++            .global_hotkey => switch (verb) {
++                .register => self.global_hotkey_register_count += 1,
++                .unregister => self.global_hotkey_unregister_count += 1,
++                else => {},
++            },
++            .configure_shortcuts => switch (verb) {
++                .apply => self.configure_shortcuts_apply_count += 1,
++                else => {},
++            },
++            .screen_capture => switch (verb) {
++                .start => self.screen_capture_start_count += 1,
++                .stop => self.screen_capture_stop_count += 1,
++                else => {},
++            },
++        }
++    }
++
++    pub fn recordOutcome(self: *PlatformFeatureState, outcome: PlatformFeatureOutcome) void {
++        self.last_outcome = outcome;
++        switch (outcome) {
++            .not_executed => {},
++            .succeeded => self.succeeded_count += 1,
++            .unsupported => self.unsupported_count += 1,
++            .failed => self.failed_count += 1,
++        }
++    }
++};
++
+ /// How a spawn's stdout comes back. `.lines` streams each line as an
+ /// `on_line` Msg as it arrives (the default; long-running streams).
+ /// `.collect` accumulates whole stdout — single-line JSON far beyond the
+@@ -4881,6 +4990,13 @@ pub fn Effects(comptime Msg: type) type {
+         /// Window-action mirror: counts and the last requested label,
+         /// observable in tests (`windowActionState`).
+         window_action_state: WindowActionState = .{},
++        /// Platform-feature mirror: per-feature-per-verb counts for
++        /// every `Cmd.platformFeature` trigger, observable in tests
++        /// (`platformFeatureState`). The mirror moves BEFORE the
++        /// runtime call (and INSTEAD of it under the fake executor),
++        /// so a regression can pin the (feature, verb) pair that rode
++        /// the channel without inspecting the platform's own state.
++        platform_feature_state: PlatformFeatureState = .{},
+         /// The environment spawned children inherit and fetch honors
+         /// (PATH for `spawnPath`-style lookups, proxy variables).
+         /// Bound once from the loop thread before the first real
+@@ -6322,6 +6438,15 @@ pub fn Effects(comptime Msg: type) type {
+             return fileOpFailure(err);
+         }
+ 
++        /// Requests one loop-thread wake through the bound platform service.
++        /// This is the only Effects method an embedding host worker may call
++        /// off the loop thread. The host must stop and join every caller before
++        /// its deinit hook returns.
++        pub fn requestWake(self: *Self) anyerror!void {
++            const services = self.services orelse return error.UnsupportedService;
++            try services.wake();
++        }
++
+         /// Switch this channel into session-replay mode: the fake
+         /// executor (no processes, no network, no file or pasteboard
+         /// I/O — requests park in their slots) with journaled results as
+@@ -10408,6 +10533,72 @@ pub fn Effects(comptime Msg: type) type {
+             return self.window_action_state;
+         }
+ 
++        /// Trigger a platform-feature verb on the runtime's
++        /// PlatformServices (not the agentd host bridge).
++        /// Fire-and-forget: no key, no ok/err routing, no result Msg.
++        /// Today only `shortcut_capture` is wired (start/stop), routed
++        /// to `PlatformServices.startShortcutCapture`/
++        /// `stopShortcutCapture`; a null `services` binding (fake
++        /// executor or a platform without the seam) only moves the
++        /// mirror — the same discipline as `setAudioVolume` and the
++        /// window verbs. A new feature adds a new `PlatformFeatureId`
++        /// wire value, a new branch here, and a `cmd_format_version`
++        /// bump.
++        pub fn platformFeature(
++            self: *Self,
++            feature: PlatformFeatureId,
++            verb: PlatformFeatureVerb,
++        ) void {
++            self.platform_feature_state.record(feature, verb);
++            if (self.executor == .fake) return;
++            const services = self.services orelse {
++                self.platform_feature_state.recordOutcome(.unsupported);
++                return;
++            };
++            switch (feature) {
++                .shortcut_capture => switch (verb) {
++                    .start => services.startShortcutCapture() catch |err| {
++                        self.platform_feature_state.recordOutcome(if (err == error.UnsupportedService) .unsupported else .failed);
++                        return;
++                    },
++                    .stop => services.stopShortcutCapture() catch |err| {
++                        self.platform_feature_state.recordOutcome(if (err == error.UnsupportedService) .unsupported else .failed);
++                        return;
++                    },
++                    else => {
++                        self.platform_feature_state.recordOutcome(.unsupported);
++                        return;
++                    },
++                },
++                .global_hotkey => {
++                    // I-4: global_hotkey 的 macOS Carbon 实现尚未注入。
++                    // 当前诚实返回 unsupported，不伪造成功。
++                    self.platform_feature_state.recordOutcome(.unsupported);
++                    return;
++                },
++                .configure_shortcuts => {
++                    // I-5: 动态 configure_shortcuts 的 macOS 实现尚未注入。
++                    // 当前诚实返回 unsupported，不伪造成功。
++                    self.platform_feature_state.recordOutcome(.unsupported);
++                    return;
++                },
++                // I-6 quarantine：wire id 保留，但异步权威 ACK 尚未完成。
++                // 中央硬门确保旧/意外命令不会调用同步 AppKit 原型或触发 TCC。
++                .screen_capture => {
++                    self.platform_feature_state.recordOutcome(.unsupported);
++                    return;
++                },
++            }
++            self.platform_feature_state.recordOutcome(.succeeded);
++        }
++
++        /// The platform-feature mirror, for tests: per-feature-per-verb
++        /// counts for every `Cmd.platformFeature` trigger that rode the
++        /// channel.
++        pub fn platformFeatureState(self: *const Self) PlatformFeatureState {
++            return self.platform_feature_state;
++        }
++
+         /// Set playback volume, clamped to 0.0—1.0. Remembered across
+         /// tracks: the next `playAudio` re-applies it.
+         pub fn setAudioVolume(self: *Self, volume: f32) void {
+diff --git a/src/runtime/session_journal.zig b/src/runtime/session_journal.zig
+index 074bc99..7566b20 100644
+--- a/src/runtime/session_journal.zig
++++ b/src/runtime/session_journal.zig
+@@ -199,7 +199,9 @@ fn formatLayoutDescription(comptime epoch: u32) []const u8 {
+             // meaningless under replay), so its wire layout is stated by
+             // hand — the coupling is commented at the encodeEvent arm.
+             "gpu_surface_frame=window_id:u64,label:str,width:f32,height:f32,scale_factor:f32," ++
+-            "frame_index:u64,timestamp_ns:u64,frame_interval_ns:u64,input_timestamp_ns:u64,canvas_frame_full_repaint:bool\n" ++
++            "frame_index:u64,timestamp_ns:u64,frame_interval_ns:u64,input_timestamp_ns:u64,canvas_frame_full_repaint:bool," ++
++            "window_chrome.insets:insets,window_chrome.buttons:rect,window_chrome.form_factor:enum-u8," ++
++            "window_chrome.tabs_projected:bool\n" ++
+             "gpu_surface_resized=" ++ layout_fingerprint.describe(platform.GpuSurfaceResizeEvent) ++ "\n" ++
+             "gpu_surface_input=" ++ layout_fingerprint.describe(platform.GpuSurfaceInputEvent) ++ "\n" ++
+             "gpu_surface_scroll_driver=" ++ layout_fingerprint.describe(platform.GpuSurfaceScrollDriverEvent) ++ "\n" ++
+@@ -532,10 +534,10 @@ fn readRect(cursor: *ReadCursor) JournalError!geometry.RectF {
+ 
+ /// Encode one platform event into `buffer`, returning the encoded
+ /// payload. `gpu_surface_frame` deliberately journals only the fields
+-/// dispatch semantics depend on (identity, geometry, frame index and
+-/// timestamps, full-repaint) — the rest of that struct is host render
+-/// telemetry about the PREVIOUS present, meaningless under replay's
+-/// null host; decode fills those with defaults.
++/// dispatch semantics depend on (identity, geometry, window chrome,
++/// frame index, timestamps, full-repaint) — the rest of that struct is
++/// host render telemetry about the PREVIOUS present, meaningless under
++/// replay's null host; decode fills those with defaults.
+ pub fn encodeEvent(event: platform.Event, buffer: []u8) JournalError![]const u8 {
+     var cursor = WriteCursor{ .buffer = buffer };
+     switch (event) {
+@@ -688,6 +690,10 @@ pub fn encodeEvent(event: platform.Event, buffer: []u8) JournalError![]const u8
+             try cursor.writeInt(u64, frame.frame_interval_ns);
+             try cursor.writeInt(u64, frame.input_timestamp_ns);
+             try cursor.writeBool(frame.canvas_frame_full_repaint);
++            try writeInsets(&cursor, frame.window_chrome.insets);
++            try writeRect(&cursor, frame.window_chrome.buttons);
++            try cursor.writeEnum(frame.window_chrome.form_factor);
++            try cursor.writeBool(frame.window_chrome.tabs_projected);
+         },
+         .gpu_surface_resized => |resize| {
+             try cursor.writeEnum(EventTag.gpu_surface_resized);
+@@ -936,6 +942,12 @@ pub fn decodeEvent(bytes: []const u8, storage: *EventDecodeStorage) JournalError
+                 .frame_interval_ns = try cursor.readInt(u64),
+                 .input_timestamp_ns = try cursor.readInt(u64),
+                 .canvas_frame_full_repaint = try cursor.readBool(),
++                .window_chrome = .{
++                    .insets = try readInsets(&cursor),
++                    .buttons = try readRect(&cursor),
++                    .form_factor = try cursor.readEnum(platform.FormFactor),
++                    .tabs_projected = try cursor.readBool(),
++                },
+             } };
+         },
+         .gpu_surface_resized => blk: {
+@@ -1591,10 +1603,21 @@ test "event codec round-trips every payload variant" {
+             .frame_index = 9,
+             .timestamp_ns = 777,
+             .canvas_frame_full_repaint = true,
++            .window_chrome = .{
++                .insets = .{ .top = 52, .left = 69 },
++                .buttons = geometry.RectF.init(14, 19, 55, 14),
++                .form_factor = .regular,
++                .tabs_projected = true,
++            },
+         } });
+         try testing.expectEqualStrings("calc-canvas", decoded.gpu_surface_frame.label);
+         try testing.expectEqual(@as(u64, 9), decoded.gpu_surface_frame.frame_index);
+         try testing.expect(decoded.gpu_surface_frame.canvas_frame_full_repaint);
++        try testing.expectEqual(@as(f32, 52), decoded.gpu_surface_frame.window_chrome.insets.top);
++        try testing.expectEqual(@as(f32, 69), decoded.gpu_surface_frame.window_chrome.insets.left);
++        try testing.expectEqual(@as(f32, 55), decoded.gpu_surface_frame.window_chrome.buttons.width);
++        try testing.expectEqual(platform.FormFactor.regular, decoded.gpu_surface_frame.window_chrome.form_factor);
++        try testing.expect(decoded.gpu_surface_frame.window_chrome.tabs_projected);
+         // Host render telemetry decodes to defaults, by design.
+         try testing.expectEqual(@as(u32, 0), decoded.gpu_surface_frame.sample_color);
+     }
+diff --git a/src/runtime/session_record.zig b/src/runtime/session_record.zig
+index cf45a2a..2f5e2c1 100644
+--- a/src/runtime/session_record.zig
++++ b/src/runtime/session_record.zig
+@@ -166,6 +166,14 @@ pub const SessionRecorder = struct {
+         self.depth += 1;
+     }
+ 
++    /// Secure input cannot be replayed faithfully without persisting the
++    /// credential bytes. Stop and deliberately leave the journal unsealed so
++    /// replay refuses it instead of presenting a redacted event as success.
++    pub fn rejectSecureInput(self: *SessionRecorder) void {
++        if (!self.began or self.failed or self.finished) return;
++        self.fail("secure input cannot be recorded or replayed");
++    }
++
+     /// Append the innermost staged event record. Call exactly once per
+     /// successful `stageEvent`, on dispatch exit.
+     pub fn commitEvent(self: *SessionRecorder) void {
+diff --git a/src/runtime/session_replay.zig b/src/runtime/session_replay.zig
+index db118c1..aa7fde1 100644
+--- a/src/runtime/session_replay.zig
++++ b/src/runtime/session_replay.zig
+@@ -66,6 +66,10 @@ pub const ReplayError = error{
+     /// to decode at all); this class is for records that decode fine
+     /// but lie.
+     ReplayDamagedRecord,
++    /// A journaled frame carries dispatch-relevant non-default window
++    /// chrome, but this caller did not provide the headless sink that can
++    /// restore it before layout runs. Never silently replay with zero chrome.
++    ReplayWindowChromeUnavailable,
+ };
+ 
+ /// Bounded mismatch detail (first N are kept; the count keeps counting).
+@@ -81,6 +85,18 @@ pub const ReplayMismatch = struct {
+     actual: u64,
+ };
+ 
++/// Replay-only boundary that restores host chrome into the headless
++/// platform before a journaled frame dispatches. The journal remains
++/// the sole source of truth; no live platform query is made.
++pub const ReplayWindowChromeSink = struct {
++    context: *anyopaque,
++    set_fn: *const fn (context: *anyopaque, window_id: platform.WindowId, chrome: platform.WindowChrome) anyerror!void,
++
++    pub fn set(self: ReplayWindowChromeSink, window_id: platform.WindowId, chrome: platform.WindowChrome) anyerror!void {
++        return self.set_fn(self.context, window_id, chrome);
++    }
++};
++
+ pub const ReplayOptions = struct {
+     /// Compare fingerprint checkpoints and screenshot marks. Off, replay
+     /// only proves the journal drives cleanly end to end.
+@@ -93,6 +109,9 @@ pub const ReplayOptions = struct {
+     /// Only consulted when a record references a blob; a journal
+     /// without image records replays fine with none.
+     blobs: ?session_blobs.SessionBlobSource = null,
++    /// Headless platform state that dispatch-time layout queries. Set
++    /// immediately before the matching gpu-surface frame is dispatched.
++    window_chrome_sink: ?ReplayWindowChromeSink = null,
+ };
+ 
+ pub const ReplayReport = struct {
+@@ -174,6 +193,16 @@ pub fn replaySession(
+                         // below fails loudly instead.
+                     };
+                 }
++                switch (event) {
++                    .gpu_surface_frame => |frame| {
++                        if (options.window_chrome_sink) |sink| {
++                            try sink.set(frame.window_id, frame.window_chrome);
++                        } else if (!std.meta.eql(frame.window_chrome, platform.WindowChrome{})) {
++                            return error.ReplayWindowChromeUnavailable;
++                        }
++                    },
++                    else => {},
++                }
+                 try runtime.dispatchPlatformEvent(app, event);
+                 report.events_replayed += 1;
+             },
+diff --git a/src/runtime/session_tests.zig b/src/runtime/session_tests.zig
+index 706631c..a0a6492 100644
+--- a/src/runtime/session_tests.zig
++++ b/src/runtime/session_tests.zig
+@@ -566,6 +566,140 @@ fn replayIntoFreshApp(gpa: std.mem.Allocator, journal_bytes: []const u8, web_lay
+     };
+ }
+ 
++const ChromeReplayModel = struct {};
++const ChromeReplayMsg = union(enum) { noop };
++const ChromeReplayApp = ui_app_mod.UiApp(ChromeReplayModel, ChromeReplayMsg);
++
++fn chromeReplayUpdate(_: *ChromeReplayModel, _: ChromeReplayMsg) void {}
++
++fn chromeReplayView(ui: *ChromeReplayApp.Ui, _: *const ChromeReplayModel) ChromeReplayApp.Ui.Node {
++    return ui.column(.{}, .{
++        ui.row(.{ .window_drag = true, .height = 46, .padding = 8, .gap = 6 }, .{
++            ui.text(.{}, "Codex"),
++            ui.text(.{}, "Toggle"),
++        }),
++    });
++}
++
++fn chromeReplayOptions() ChromeReplayApp.Options {
++    return .{
++        .name = "session-window-chrome",
++        .scene = session_scene,
++        .canvas_label = canvas_label,
++        .update = chromeReplayUpdate,
++        .view = chromeReplayView,
++    };
++}
++
++fn setReplayWindowChrome(context: *anyopaque, window_id: platform.WindowId, chrome: platform.WindowChrome) anyerror!void {
++    const null_platform: *platform.NullPlatform = @ptrCast(@alignCast(context));
++    try null_platform.setWindowChromeForWindow(window_id, chrome);
++}
++
++fn codexTextX(runtime: *core.Runtime) !f32 {
++    const layout = try runtime.canvasWidgetLayout(1, canvas_label);
++    for (layout.nodes) |node| {
++        if (node.widget.kind == .text and std.mem.eql(u8, node.widget.text, "Codex")) return node.frame.x;
++    }
++    return error.WidgetNotFound;
++}
++
++test "session replay restores journaled window chrome before a drag-header frame" {
++    const gpa = std.testing.allocator;
++    const live_chrome: platform.WindowChrome = .{
++        .insets = .{ .top = 52, .left = 69 },
++        .buttons = geometry.RectF.init(14, 19, 55, 14),
++    };
++    const buffer = try std.heap.page_allocator.create(JournalBuffer);
++    defer std.heap.page_allocator.destroy(buffer);
++    buffer.len = 0;
++
++    var recorded_fingerprint: u64 = 0;
++    var recorded_button_x: f32 = 0;
++    {
++        const recorder = try std.heap.page_allocator.create(session_record.SessionRecorder);
++        defer std.heap.page_allocator.destroy(recorder);
++        recorder.* = session_record.SessionRecorder.init(buffer.sink());
++        recorder.begin(.{ .platform_name = "test", .app_name = "session-window-chrome", .window_width = 400, .window_height = 300 });
++
++        const harness = try core.TestHarness().create(gpa, .{ .size = geometry.SizeF.init(400, 300) });
++        defer harness.destroy(gpa);
++        harness.null_platform.gpu_surfaces = true;
++        harness.null_platform.window_chrome = live_chrome;
++        harness.runtime.options.session_recorder = recorder;
++        const app_state = try gpa.create(ChromeReplayApp);
++        defer gpa.destroy(app_state);
++        app_state.* = ChromeReplayApp.init(std.heap.page_allocator, .{}, chromeReplayOptions());
++        defer app_state.deinit();
++        const app = app_state.app();
++
++        try harness.start(app);
++        try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_frame = .{
++            .label = canvas_label,
++            .size = geometry.SizeF.init(400, 300),
++            .scale_factor = 2,
++            .frame_index = 1,
++            .timestamp_ns = 1_000_000,
++            .window_chrome = live_chrome,
++        } });
++        try harness.runtime.dispatchPlatformEvent(app, .frame_requested);
++        recorded_button_x = try codexTextX(&harness.runtime);
++        try std.testing.expect(recorded_button_x >= live_chrome.insets.left);
++        recorded_fingerprint = harness.runtime.sessionStateFingerprint();
++        recorder.finish();
++        try std.testing.expect(!recorder.failed);
++    }
++
++    const missing_sink_harness = try core.TestHarness().create(gpa, .{ .size = geometry.SizeF.init(400, 300) });
++    defer missing_sink_harness.destroy(gpa);
++    missing_sink_harness.null_platform.gpu_surfaces = true;
++    const missing_sink_app_state = try gpa.create(ChromeReplayApp);
++    defer gpa.destroy(missing_sink_app_state);
++    missing_sink_app_state.* = ChromeReplayApp.init(std.heap.page_allocator, .{}, chromeReplayOptions());
++    defer missing_sink_app_state.deinit();
++    try std.testing.expectError(error.ReplayWindowChromeUnavailable, session_replay.replaySession(
++        &missing_sink_harness.runtime,
++        missing_sink_app_state.app(),
++        buffer.journalBytes(),
++        .{ .verify = false, .require_same_platform = false },
++    ));
++
++    const replay_harness = try core.TestHarness().create(gpa, .{ .size = geometry.SizeF.init(400, 300) });
++    defer replay_harness.destroy(gpa);
++    replay_harness.null_platform.gpu_surfaces = true;
++    const replay_app_state = try gpa.create(ChromeReplayApp);
++    defer gpa.destroy(replay_app_state);
++    replay_app_state.* = ChromeReplayApp.init(std.heap.page_allocator, .{}, chromeReplayOptions());
++    defer replay_app_state.deinit();
++
++    const report = try session_replay.replaySession(&replay_harness.runtime, replay_app_state.app(), buffer.journalBytes(), .{
++        .verify = true,
++        .require_same_platform = false,
++        .window_chrome_sink = .{ .context = &replay_harness.null_platform, .set_fn = setReplayWindowChrome },
++    });
++    try std.testing.expect(report.ok());
++    const replay_services = replay_harness.null_platform.platform().services;
++    try std.testing.expectEqual(live_chrome, replay_services.windowChrome(1));
++    try std.testing.expectEqual(recorded_button_x, try codexTextX(&replay_harness.runtime));
++    try std.testing.expectEqual(recorded_fingerprint, replay_harness.runtime.sessionStateFingerprint());
++
++    const second_window_chrome: platform.WindowChrome = .{
++        .insets = .{ .top = 40, .left = 52 },
++        .buttons = geometry.RectF.init(10, 15, 42, 12),
++    };
++    try replay_harness.null_platform.setWindowChromeForWindow(2, second_window_chrome);
++    try std.testing.expectEqual(live_chrome, replay_services.windowChrome(1));
++    try std.testing.expectEqual(second_window_chrome, replay_services.windowChrome(2));
++    try replay_harness.null_platform.setWindowChromeForWindow(1, .{});
++    try std.testing.expectEqual(platform.WindowChrome{}, replay_services.windowChrome(1));
++    var capacity_platform = platform.NullPlatform.init(.{});
++    var window_id: platform.WindowId = 1;
++    while (window_id <= platform.max_windows) : (window_id += 1) {
++        try capacity_platform.setWindowChromeForWindow(window_id, .{});
++    }
++    try std.testing.expectError(error.WindowLimitReached, capacity_platform.setWindowChromeForWindow(platform.max_windows + 1, .{}));
++}
++
+ test "a recorded session replays to identical model state and fingerprints" {
+     const gpa = std.testing.allocator;
+     const buffer = try std.heap.page_allocator.create(JournalBuffer);
+diff --git a/src/runtime/ts_core_host.zig b/src/runtime/ts_core_host.zig
+index becd14f..ab93c09 100644
+--- a/src/runtime/ts_core_host.zig
++++ b/src/runtime/ts_core_host.zig
+@@ -737,6 +737,9 @@ pub fn TsCoreHost(comptime core: type) type {
+         /// `TsCoreHost.drain` and the `TsUiApp` update_fx seam — keep
+         /// that adjacency).
+         var swallow_next_dispatch: bool = false;
++        /// Loop-thread observer for native-only surface owners. It receives
++        /// only Msg values and owns no product model or reducer state.
++        var msg_observer: ?*const fn (Msg) void = null;
+         var service_results: ?ServiceResultBinding = null;
+         var pending_service_channel_close: ?u64 = null;
+ 
+@@ -943,6 +946,7 @@ pub fn TsCoreHost(comptime core: type) type {
+             if (depth >= max_now_chain) {
+                 @panic("ts core host: more than 64 chained Cmd.now dispatches from one event - update is requesting timestamps in a loop");
+             }
++            if (msg_observer) |observe| observe(msg);
+             if (comptime update_returns_cmd) {
+                 const result = core.update(model_root, msg);
+                 model_root = core.commitModelRoot(result.model);
+@@ -1666,6 +1670,16 @@ pub fn TsCoreHost(comptime core: type) type {
+                             .on_result = dbResultMsg,
+                         });
+                     },
++                    // platform_feature [op 0x33][feature_id u8][verb u8]
++                    0x33 => {
++                        const feature_byte = takeByte(cmd, &at);
++                        const verb_byte = takeByte(cmd, &at);
++                        const feature = std.enums.fromInt(runtime_effects.PlatformFeatureId, feature_byte) orelse
++                            @panic("ts core host: unknown platform_feature feature wire value - the core and this runtime disagree on cmd_format_version");
++                        const verb = std.enums.fromInt(runtime_effects.PlatformFeatureVerb, verb_byte) orelse
++                            @panic("ts core host: unknown platform_feature verb wire value - the core and this runtime disagree on cmd_format_version");
++                        fx.platformFeature(feature, verb);
++                    },
+                     else => @panic("ts core host: unknown command wire record - the core and this runtime disagree on cmd_format_version"),
+                 }
+             }
+diff --git a/src/runtime/ts_core_host_tests.zig b/src/runtime/ts_core_host_tests.zig
+index b1274eb..943f6fb 100644
+--- a/src/runtime/ts_core_host_tests.zig
++++ b/src/runtime/ts_core_host_tests.zig
+@@ -10,6 +10,7 @@
+ 
+ const std = @import("std");
+ const effects_mod = @import("effects.zig");
++const platform_types = @import("../platform/types.zig");
+ const runtime_clock = @import("clock.zig");
+ const ts_core_host = @import("ts_core_host.zig");
+ const platform = @import("../platform/root.zig");
+@@ -340,6 +341,8 @@ const mini_core = struct {
+         write_save_chunk, // 103: write_file_chunk "save" -> wrote/failed
+         close_save_sink, // 104: write_file_close "save" -> wrote/failed
+         dock_on, // 105: dock_presence true
++        platform_start, // 106: platform_feature shortcut_capture start
++        platform_stop, // 107: platform_feature shortcut_capture stop
+     };
+ 
+     const stream_fill_keys = [_][]const u8{
+@@ -493,6 +496,8 @@ const mini_core = struct {
+             .open_save_sink => return .{ .model = model, .cmd = cmdWriteFileStream("save", 12, 8, "notes.bin") },
+             .write_save_chunk => return .{ .model = model, .cmd = cmdWriteFileChunk("save", 12, 8, "next") },
+             .close_save_sink => return .{ .model = model, .cmd = cmdWriteFileClose("save", 12, 8) },
++            .platform_start => return .{ .model = model, .cmd = cmdPlatformFeature(0x01, 0x01) },
++            .platform_stop => return .{ .model = model, .cmd = cmdPlatformFeature(0x01, 0x02) },
+             .wrote => {
+                 const out = frameCreate(model.*);
+                 out.saved = true;
+@@ -1305,6 +1310,14 @@ const mini_core = struct {
+         return out;
+     }
+ 
++    fn cmdPlatformFeature(feature: u8, verb: u8) []const u8 {
++        const out = rt.frameAlloc(u8, 3);
++        out[0] = 0x1E;
++        out[1] = feature;
++        out[2] = verb;
++        return out;
++    }
++
+     fn subTimer(key: []const u8, every_ms: f64, msg_tag: u8) []const u8 {
+         const out = rt.frameAlloc(u8, 2 + key.len + 8 + 1);
+         out[0] = 0x01;
+@@ -1370,6 +1383,40 @@ const tick_timer_key: u64 = ts_core_host.timer_key_base + 0;
+ // test process keeps it off the test stack. Tests run sequentially.
+ var channel: Fx = undefined;
+ 
++const PlatformFeatureProbe = struct {
++    const Behavior = enum { succeed, unsupported, fail };
++
++    start_count: u32 = 0,
++    stop_count: u32 = 0,
++    start_behavior: Behavior = .succeed,
++    stop_behavior: Behavior = .succeed,
++
++    fn fromContext(context: ?*anyopaque) !*PlatformFeatureProbe {
++        const raw = context orelse return error.MissingPlatformFeatureProbe;
++        return @ptrCast(@alignCast(raw));
++    }
++
++    fn start(context: ?*anyopaque) anyerror!void {
++        const self = try fromContext(context);
++        self.start_count += 1;
++        switch (self.start_behavior) {
++            .succeed => {},
++            .unsupported => return error.UnsupportedService,
++            .fail => return error.PlatformFeatureProbeFailure,
++        }
++    }
++
++    fn stop(context: ?*anyopaque) anyerror!void {
++        const self = try fromContext(context);
++        self.stop_count += 1;
++        switch (self.stop_behavior) {
++            .succeed => {},
++            .unsupported => return error.UnsupportedService,
++            .fail => return error.PlatformFeatureProbeFailure,
++        }
++    }
++};
++
+ fn freshChannel() *Fx {
+     channel = Fx.init(std.testing.allocator);
+     channel.executor = .fake;
+@@ -3273,3 +3320,106 @@ test "a spawn_failed transport end routes the event arm with the reason" {
+     try std.testing.expectEqual(mini_core.PtyReason.spawn_failed, Host.model().pty_reason);
+     try std.testing.expectEqual(@as(i64, -1), Host.model().pty_code);
+ }
++
++test "platform_feature decodes exact shortcut capture start and stop wire records" {
++    mini_core.rt.resetAll();
++    try std.testing.expectEqualSlices(u8, &.{ 0x1E, 0x01, 0x01 }, mini_core.cmdPlatformFeature(0x01, 0x01));
++    mini_core.rt.frameReset();
++    try std.testing.expectEqualSlices(u8, &.{ 0x1E, 0x01, 0x02 }, mini_core.cmdPlatformFeature(0x01, 0x02));
++
++    const fx = freshChannel();
++    defer fx.deinit();
++    Host.init(fx);
++    const boot_pending = fx.pendingHostCount();
++
++    Host.dispatch(fx, .platform_start);
++    try std.testing.expectEqual(@as(u32, 1), fx.platformFeatureState().shortcut_capture_start_count);
++    try std.testing.expectEqual(@as(u32, 0), fx.platformFeatureState().shortcut_capture_stop_count);
++    Host.dispatch(fx, .platform_stop);
++    try std.testing.expectEqual(@as(u32, 1), fx.platformFeatureState().shortcut_capture_start_count);
++    try std.testing.expectEqual(@as(u32, 1), fx.platformFeatureState().shortcut_capture_stop_count);
++    try std.testing.expectEqual(effects_mod.PlatformFeatureOutcome.not_executed, fx.platformFeatureState().last_outcome);
++    try std.testing.expectEqual(@as(u32, 0), fx.platformFeatureState().succeeded_count);
++    try std.testing.expectEqual(boot_pending, fx.pendingHostCount());
++}
++
++test "platform_feature calls real services and records success unsupported and failure" {
++    const fx = freshChannel();
++    defer fx.deinit();
++    Host.init(fx);
++
++    var probe: PlatformFeatureProbe = .{};
++    var services: platform_types.PlatformServices = .{
++        .context = &probe,
++        .start_shortcut_capture_fn = PlatformFeatureProbe.start,
++        .stop_shortcut_capture_fn = PlatformFeatureProbe.stop,
++    };
++    fx.bindServices(&services);
++    fx.executor = .real;
++
++    Host.dispatch(fx, .platform_start);
++    Host.dispatch(fx, .platform_stop);
++    try std.testing.expectEqual(@as(u32, 1), probe.start_count);
++    try std.testing.expectEqual(@as(u32, 1), probe.stop_count);
++    try std.testing.expectEqual(@as(u32, 2), fx.platformFeatureState().succeeded_count);
++
++    probe.start_behavior = .unsupported;
++    Host.dispatch(fx, .platform_start);
++    try std.testing.expectEqual(@as(u32, 1), fx.platformFeatureState().unsupported_count);
++    try std.testing.expectEqual(effects_mod.PlatformFeatureOutcome.unsupported, fx.platformFeatureState().last_outcome);
++
++    probe.stop_behavior = .fail;
++    Host.dispatch(fx, .platform_stop);
++    try std.testing.expectEqual(@as(u32, 1), fx.platformFeatureState().failed_count);
++    try std.testing.expectEqual(effects_mod.PlatformFeatureOutcome.failed, fx.platformFeatureState().last_outcome);
++    try std.testing.expectEqual(@as(u32, 2), probe.start_count);
++    try std.testing.expectEqual(@as(u32, 2), probe.stop_count);
++}
++
++test "screen capture remains quarantined and never invokes platform services" {
++    const fx = freshChannel();
++    defer fx.deinit();
++    Host.init(fx);
++
++    var probe: PlatformFeatureProbe = .{};
++    var services: platform_types.PlatformServices = .{
++        .context = &probe,
++        .start_screen_capture_fn = PlatformFeatureProbe.start,
++        .stop_screen_capture_fn = PlatformFeatureProbe.stop,
++    };
++    fx.bindServices(&services);
++    fx.executor = .real;
++
++    fx.platformFeature(.screen_capture, .start);
++    fx.platformFeature(.screen_capture, .stop);
++    try std.testing.expectEqual(@as(u32, 1), fx.platformFeatureState().screen_capture_start_count);
++    try std.testing.expectEqual(@as(u32, 1), fx.platformFeatureState().screen_capture_stop_count);
++    try std.testing.expectEqual(@as(u32, 0), probe.start_count);
++    try std.testing.expectEqual(@as(u32, 0), probe.stop_count);
++    try std.testing.expectEqual(@as(u32, 2), fx.platformFeatureState().unsupported_count);
++    try std.testing.expectEqual(@as(u32, 0), fx.platformFeatureState().succeeded_count);
++    try std.testing.expectEqual(@as(u32, 0), fx.platformFeatureState().failed_count);
++    try std.testing.expectEqual(effects_mod.PlatformFeatureOutcome.unsupported, fx.platformFeatureState().last_outcome);
++}
++
++test "platform_feature records missing services as unsupported" {
++    const fx = freshChannel();
++    defer fx.deinit();
++    Host.init(fx);
++    fx.executor = .real;
++
++    Host.dispatch(fx, .platform_start);
++    try std.testing.expectEqual(@as(u32, 1), fx.platformFeatureState().unsupported_count);
++    try std.testing.expectEqual(effects_mod.PlatformFeatureOutcome.unsupported, fx.platformFeatureState().last_outcome);
++}
++
++test "platform_feature wire enums reject unknown feature and verb bytes" {
++    try std.testing.expectEqual(
++        @as(?effects_mod.PlatformFeatureId, null),
++        std.enums.fromInt(effects_mod.PlatformFeatureId, 0xff),
++    );
++    try std.testing.expectEqual(
++        @as(?effects_mod.PlatformFeatureVerb, null),
++        std.enums.fromInt(effects_mod.PlatformFeatureVerb, 0xff),
++    );
++}
+diff --git a/src/runtime/ui_app.zig b/src/runtime/ui_app.zig
+index 02589cb..5aa208e 100644
+--- a/src/runtime/ui_app.zig
++++ b/src/runtime/ui_app.zig
+@@ -587,6 +587,13 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+             /// effects; `on_frame` remains the per-frame hook for frame
+             /// diagnostics and presented-frame reactions.
+             init_fx: ?*const fn (model: *ModelT, fx: *Effects) void = null,
++            /// Loop-thread hook invoked before an effects wake drains. A thin
++            /// native host uses this to feed worker completions through
++            /// `Effects.feedHostResult`; it never receives Model or Msg.
++            host_poll: ?*const fn (effects: *Effects) void = null,
++            /// Exactly-once host shutdown hook. It must stop and join every
++            /// worker that may call `Effects.requestWake` before returning.
++            host_deinit: ?*const fn () void = null,
+             /// Hand-written or comptime-compiled view
+             /// (`canvas.CompiledMarkupView(Model, Msg, source).build` slots
+             /// in directly). At least one of `view` and `markup` must be
+@@ -595,6 +602,10 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+             /// which point the interpreter takes over (compiled view for
+             /// release, hot reload in dev).
+             view: ?*const fn (ui: *Ui, model: *const ModelT) Ui.Node = null,
++            /// View variant for stateless width-dependent composition. The
++            /// runtime passes the current logical canvas size on every build,
++            /// including resizes; it takes precedence over `view` when set.
++            view_viewport: ?*const fn (ui: *Ui, model: *const ModelT, viewport: geometry.SizeF) Ui.Node = null,
+             /// Runtime-parsed markup view. Requires
+             /// `UiAppFeatures.runtime_markup` (the default).
+             markup: ?MarkupOptions = null,
+@@ -610,6 +621,23 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+             /// keyboard-focus signal for custom canvas chrome whose
+             /// pixels live outside the widget focus register.
+             on_lifecycle: ?*const fn (event: core.LifecycleEvent) ?MsgT = null,
++            /// App-local native surface key seam. It runs after the focused
++            /// widget's ordinary bound handler and before structural key
++            /// consumption. Returning null preserves stock widget handling.
++            surface_key: ?*const fn (
++                tree: *const Ui.Tree,
++                target: canvas.WidgetFocusTarget,
++                keyboard: canvas.WidgetKeyboardEvent,
++            ) ?MsgT = null,
++            /// App-local native surface text-edit seam. The retained editor
++            /// has already applied `edit`; `post_state` is the exact retained
++            /// value. Returning a message claims the edit before `on_input`.
++            surface_text_edit: ?*const fn (
++                tree: *const Ui.Tree,
++                target_id: canvas.ObjectId,
++                edit: canvas.TextInputEvent,
++                post_state: ?canvas.TextEditState,
++            ) ?MsgT = null,
+             /// Model-driven selection for declared platform chrome
+             /// (`scene.chrome.tabs`): returns the id of the tab the
+             /// model currently selects (one of the declared tab ids, or
+@@ -968,6 +996,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+         /// Exactly-once guard for `Options.init_fx`, independent of
+         /// `installed` so a failed install rebuild cannot rerun it.
+         init_fx_ran: bool = false,
++        host_deinit_ran: bool = false,
+         /// Last chrome overlay geometry delivered through `on_chrome`,
+         /// so resize-driven re-queries only dispatch on actual change
+         /// (fullscreen transitions flip it; ordinary resizes do not).
+@@ -1429,7 +1458,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+         }
+ 
+         fn assertOptions(options: Options) void {
+-            std.debug.assert(options.view != null or options.markup != null);
++            std.debug.assert(options.view != null or options.view_viewport != null or options.markup != null);
+             std.debug.assert((options.update != null) != (options.update_fx != null));
+             // Declared windows need the per-window view to build them.
+             std.debug.assert(options.windows_fn == null or options.window_view != null);
+@@ -1469,6 +1498,12 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+             self.pixel_buffer_window_id = null;
+         }
+ 
++        fn deinitHost(self: *Self) void {
++            if (self.host_deinit_ran) return;
++            self.host_deinit_ran = true;
++            if (self.options.host_deinit) |deinit_fn| deinit_fn();
++        }
++
+         pub fn app(self: *Self) App {
+             return .{
+                 .context = self,
+@@ -1494,6 +1529,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+         fn stopFn(context: *anyopaque, runtime: *Runtime) anyerror!void {
+             _ = runtime;
+             const self: *Self = @ptrCast(@alignCast(context));
++            self.deinitHost();
+             self.effects.deinit();
+         }
+ 
+@@ -3582,7 +3618,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+                 // be computed the way the poll computes it — over the whole
+                 // resolved import closure — or the first poll would flag a
+                 // phantom change.
+-                if (self.options.view != null and self.markup_source_hash == 0) {
++                if ((self.options.view != null or self.options.view_viewport != null) and self.markup_source_hash == 0) {
+                     self.markup_source_hash = self.embeddedMarkupClosureHash(markup_options);
+                 }
+             }
+@@ -4377,7 +4413,10 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+                 } else if (self.installed) {
+                     try self.rebuildVideoChrome(runtime);
+                 },
+-                .effects_wake => try self.drainEffects(runtime),
++                .effects_wake => {
++                    if (self.options.host_poll) |poll_fn| poll_fn(&self.effects);
++                    try self.drainEffects(runtime);
++                },
+                 .files_dropped => |drop| {
+                     const map = self.options.on_drop orelse return;
+                     if (map(drop)) |msg| try self.dispatch(runtime, drop.window_id, msg);
+@@ -5063,7 +5102,14 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+             // source-owned buffer stays in lockstep too.
+             if (pointer_event.edit) |edit| {
+                 if (pointer_event.target) |edit_target| {
+-                    if (tree.msgForTextEdit(edit_target.id, edit)) |msg| {
++                    const post_state = runtime.canvasWidgetTextEditState(pointer_event.window_id, pointer_event.view_label, edit_target.id) catch null;
++                    const native_msg = if (self.options.surface_text_edit) |map|
++                        map(tree, edit_target.id, edit, post_state)
++                    else
++                        null;
++                    if (native_msg) |msg| {
++                        try self.dispatch(runtime, pointer_event.window_id, msg);
++                    } else if (tree.msgForTextEdit(edit_target.id, edit)) |msg| {
+                         try self.dispatch(runtime, pointer_event.window_id, msg);
+                     }
+                 }
+@@ -5867,10 +5913,25 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+                         }
+                     }
+                 }
++                if (keyboard_event.keyboard.edit) |edit| {
++                    const post_state = runtime.canvasWidgetTextEditState(keyboard_event.window_id, keyboard_event.view_label, target.id) catch null;
++                    if (self.options.surface_text_edit) |map| {
++                        if (map(tree, target.id, edit, post_state)) |msg| {
++                            try self.dispatch(runtime, keyboard_event.window_id, msg);
++                            return;
++                        }
++                    }
++                }
+                 if (tree.msgForKeyboard(target.id, keyboard_event.keyboard)) |msg| {
+                     try self.dispatch(runtime, keyboard_event.window_id, msg);
+                     return;
+                 }
++                if (self.options.surface_key) |map| {
++                    if (map(tree, target, keyboard_event.keyboard)) |msg| {
++                        try self.dispatch(runtime, keyboard_event.window_id, msg);
++                        return;
++                    }
++                }
+                 if (tree.findWidget(target.id)) |widget| {
+                     if (!widget.state.disabled) {
+                         // A focused BOUND terminal owns its keys the way
+diff --git a/src/runtime/ui_app_tests.zig b/src/runtime/ui_app_tests.zig
+index 8642090..bd87ada 100644
+--- a/src/runtime/ui_app_tests.zig
++++ b/src/runtime/ui_app_tests.zig
+@@ -7932,3 +7932,39 @@ test "a primary drag released outside the view retires containment and its proof
+     try std.testing.expectEqual(@as(usize, 0), harness.runtime.views[0].canvas_widget_hover_msg_chain_len);
+     try std.testing.expect(!harness.runtime.views[0].canvas_widget_hover_pointer_live);
+ }
++
++var counter_host_deinit_calls: u32 = 0;
++fn counterHostDeinit(model: *anyopaque) void {
++    _ = model;
++    counter_host_deinit_calls += 1;
++}
++
++test "ui app host deinit runs exactly once across stop and owner teardown" {
++    counter_host_deinit_calls = 0;
++
++    const harness = try core.TestHarness().create(std.testing.allocator, .{ .size = geometry.SizeF.init(400, 300) });
++    defer harness.destroy(std.testing.allocator);
++    harness.null_platform.gpu_surfaces = true;
++
++    var options = counterOptions();
++    options.host_deinit = counterHostDeinit;
++    const app_state = try std.testing.allocator.create(CounterApp);
++    defer std.testing.allocator.destroy(app_state);
++    app_state.* = CounterApp.init(std.heap.page_allocator, .{}, options);
++    var app_state_needs_deinit = true;
++    defer if (app_state_needs_deinit) app_state.deinit();
++    const app = app_state.app();
++    try harness.start(app);
++
++    // The runtime stop hook owns the first shutdown transition.
++    try app.stop(&harness.runtime);
++    try std.testing.expectEqual(@as(u32, 1), counter_host_deinit_calls);
++
++    // A repeated stop and the later owner teardown must both remain
++    // idempotent: host workers cannot be joined or freed twice.
++    try app.stop(&harness.runtime);
++    try std.testing.expectEqual(@as(u32, 1), counter_host_deinit_calls);
++    app_state.deinit();
++    app_state_needs_deinit = false;
++    try std.testing.expectEqual(@as(u32, 1), counter_host_deinit_calls);
++}
+diff --git a/src/runtime/view.zig b/src/runtime/view.zig
+index 795bde0..81c25d3 100644
+--- a/src/runtime/view.zig
++++ b/src/runtime/view.zig
+@@ -844,6 +844,7 @@ pub const RuntimeView = struct {
+     pub const clearCanvasWidgetTextVerticalGoal = CanvasWidgetTextMethods.clearCanvasWidgetTextVerticalGoal;
+     pub const canEditCanvasWidgetText = CanvasWidgetTextMethods.canEditCanvasWidgetText;
+     pub const ensureCanvasWidgetFocusedTextCaret = CanvasWidgetTextMethods.ensureCanvasWidgetFocusedTextCaret;
++    pub const canvasWidgetTextEditState = CanvasWidgetTextMethods.canvasWidgetTextEditState;
+     pub const applyCanvasWidgetTextPointer = CanvasWidgetTextMethods.applyCanvasWidgetTextPointer;
+     pub const clearCanvasWidgetStaticTextSelection = CanvasWidgetTextMethods.clearCanvasWidgetStaticTextSelection;
+     pub const canvasWidgetCopyText = CanvasWidgetTextMethods.canvasWidgetCopyText;
+diff --git a/src/runtime/view_widget_text.zig b/src/runtime/view_widget_text.zig
+index 3ae88fc..daf8d6f 100644
+--- a/src/runtime/view_widget_text.zig
++++ b/src/runtime/view_widget_text.zig
+@@ -978,6 +978,17 @@ pub fn RuntimeViewCanvasWidgetText(comptime RuntimeView: type) type {
+             return true;
+         }
+ 
++        pub fn canvasWidgetTextEditState(self: *const RuntimeView, id: canvas.ObjectId) ?canvas.TextEditState {
++            const index = self.canvasWidgetNodeIndexById(id) orelse return null;
++            const widget = self.widget_layout_nodes[index].widget;
++            if (!canvasWidgetEditableTextKind(widget.kind) or widget.state.disabled) return null;
++            return .{
++                .text = widget.text,
++                .selection = widget.text_selection orelse canvas.TextSelection.collapsed(widget.text.len),
++                .composition = widget.text_composition,
++            };
++        }
++
+         pub fn applyCanvasWidgetTextPointer(
+             self: *RuntimeView,
+             target_id: canvas.ObjectId,
+diff --git a/src/tooling/templates.zig b/src/tooling/templates.zig
+index cf26f64..e6f242a 100644
+--- a/src/tooling/templates.zig
++++ b/src/tooling/templates.zig
+@@ -1781,8 +1781,8 @@ fn buildZig(allocator: std.mem.Allocator, names: TemplateNames, framework_path:
+         \\    if (platform == .macos) {
+         \\        switch (web_engine) {
+         \\            .system => {
+-        \\                const sdk_include = if (b.sysroot) |sysroot| b.fmt("-I{s}/usr/include", .{sysroot}) else "";
+-        \\                const flags: []const []const u8 = if (b.sysroot) |sysroot| &.{ "-fobjc-arc", "-fno-sanitize=builtin", "-ObjC", "-mmacosx-version-min=11.0", "-isysroot", sysroot, sdk_include } else &.{ "-fobjc-arc", "-fno-sanitize=builtin", "-ObjC", "-mmacosx-version-min=11.0" };
++        \\                const sdk_include = if (b.sysroot) |sysroot| b.fmt("-isystem{s}/usr/include", .{sysroot}) else "";
++        \\                const flags: []const []const u8 = if (b.sysroot) |sysroot| &.{ "-fobjc-arc", "-fno-sanitize=builtin", "-Wno-deprecated-declarations", "-ObjC", "-mmacosx-version-min=11.0", "-isysroot", sysroot, sdk_include } else &.{ "-fobjc-arc", "-fno-sanitize=builtin", "-Wno-deprecated-declarations", "-ObjC", "-mmacosx-version-min=11.0" };
+         \\                app_mod.addCSourceFile(.{ .file = nativeSdkPath(b, native_sdk_path, "src/platform/macos/appkit_host.m"), .flags = flags });
+         \\                app_mod.linkFramework("WebKit", .{});
+         \\            },
+@@ -1819,6 +1819,7 @@ fn buildZig(allocator: std.mem.Allocator, names: TemplateNames, framework_path:
+         \\        app_mod.linkFramework("Accelerate", .{});
+         \\        app_mod.linkFramework("Foundation", .{});
+         \\        app_mod.linkFramework("CoreText", .{});
++        \\        app_mod.linkFramework("CoreGraphics", .{});
+         \\        app_mod.linkFramework("UniformTypeIdentifiers", .{});
+         \\        app_mod.linkFramework("Security", .{});
+         \\        app_mod.linkFramework("Metal", .{});
+diff --git a/tools/corewire/emit.zig b/tools/corewire/emit.zig
+index 177279c..21d0381 100644
+--- a/tools/corewire/emit.zig
++++ b/tools/corewire/emit.zig
+@@ -1616,6 +1616,7 @@ test "emission is deterministic and carries the mirror surface" {
+     try testing.expect(std.mem.indexOf(u8, first, "count: i64,") != null);
+     try testing.expect(std.mem.indexOf(u8, first, "pub const Msg = union(enum) {") != null);
+     try testing.expect(std.mem.indexOf(u8, first, "label_set: []const u8,") != null);
++    try testing.expect(std.mem.indexOf(u8, first, "@setEvalBranchQuota(10_000 + msg_tags.len * 400);") != null);
+     try testing.expect(std.mem.indexOf(u8, first, "abi.dispatch_void(0,") != null);
+     try testing.expect(std.mem.indexOf(u8, first, "abi.dispatch_bytes(1,") != null);
+     // A bare-model init emits the pointer-returning shape.
+@@ -1780,7 +1781,7 @@ test "a u64 attestation on chrome geometry refuses at check time" {
+     // class cannot carry.
+     const source =
+         \\{
+-        \\  "format": 1, "wire_version": 7, "abi_version": 2,
++        \\  "format": 1, "wire_version": 8, "abi_version": 2,
+         \\  "compiler_version": "0.0.1", "entry": "src/core.ts",
+         \\  "source_hash": "00000000c0ffee00", "build_id": "00000000b01dface", "model_fingerprint": "00000000a11ce001",
+         \\  "types": {
+@@ -1963,7 +1964,7 @@ test "a shared authored type spelling like a synthesized name stays a top-level
+     // first site would leave the second dangling.
+     const source =
+         \\{
+-        \\  "format": 1, "wire_version": 7, "abi_version": 2,
++        \\  "format": 1, "wire_version": 8, "abi_version": 2,
+         \\  "compiler_version": "0.0.1", "entry": "src/core.ts",
+         \\  "source_hash": "00000000c0ffee00", "build_id": "00000000b01dface", "model_fingerprint": "00000000a11ce001",
+         \\  "types": {
+@@ -2400,7 +2401,7 @@ test "a chrome arm holding its insets by reference refuses" {
+     // node (by-reference) insets record cannot take that construction.
+     const source =
+         \\{
+-        \\  "format": 1, "wire_version": 7, "abi_version": 2,
++        \\  "format": 1, "wire_version": 8, "abi_version": 2,
+         \\  "compiler_version": "0.0.1", "entry": "src/core.ts",
+         \\  "source_hash": "00000000c0ffee00", "build_id": "00000000b01dface", "model_fingerprint": "00000000a11ce001",
+         \\  "types": {
+diff --git a/tools/corewire/emit_facade.zig b/tools/corewire/emit_facade.zig
+index 3a65b08..d351ef6 100644
+--- a/tools/corewire/emit_facade.zig
++++ b/tools/corewire/emit_facade.zig
+@@ -16,7 +16,8 @@
+ //!   own declaring module (the sidecar's origin facts) — the compiler's
+ //!   sidecar emitter reads the entry module's exported declarations;
+ //! - the exported-const channel conventions (appearanceMsg, chromeMsg,
+-//!   envMsgs) and the single name-resolved viewUnbound list;
++//!   envMsgs), plus the split modelUnbound/msgUnbound declarations the
++//!   external ScriptC library compiler recognizes;
+ //! - one exported wrapper per model helper, in declaration order (the
+ //!   compiled contract's model_helpers table and helper_call's index
+ //!   space both derive from it), with the inline wholeness proof on
+@@ -113,7 +114,8 @@ const fixed_exports = [_][]const u8{
+     "dispatch_scroll_state", "abi_subscriptions", "model_snapshot",    "persist_snapshot",
+     "restore_model",         "migrate_model",     "helper_call",       "abi_command_msg",
+     "abi_frame_msg",         "abi_key_msg",       "abi_pinch_msg",     "abi_drop_msg",
+-    "appearanceMsg",         "chromeMsg",         "envMsgs",           "viewUnbound",
++    "appearanceMsg",         "chromeMsg",         "envMsgs",           "modelUnbound",
++    "msgUnbound",
+ };
+ 
+ /// Ambient VALUE bindings generated code calls directly. A model helper is
+@@ -970,65 +972,26 @@ const FacadeEmitter = struct {
+     }
+ 
+     fn unboundDecl(self: *FacadeEmitter) Error!void {
+-        const model = sidecar_mod.findStruct(self.sidecar.types, self.sidecar.model).?;
+-        var field_unbound: std.ArrayListUnmanaged([]const u8) = .empty;
+-        for (self.sidecar.model_unbound) |name| {
+-            for (model.fields) |field| {
+-                if (std.mem.eql(u8, field.name, name)) {
+-                    try field_unbound.append(self.arena, name);
+-                    break;
+-                }
+-            }
+-        }
+-        // Helper entries stay sidecar facts resolved by the compiler's
+-        // own name resolution: a helper name in the authored list
+-        // resolves against this module's exported wrappers.
+-        var helper_unbound: std.ArrayListUnmanaged([]const u8) = .empty;
+-        for (self.sidecar.model_unbound) |name| {
+-            for (self.sidecar.model_helpers) |helper| {
+-                if (std.mem.eql(u8, helper.name, name)) {
+-                    try helper_unbound.append(self.arena, name);
+-                    break;
+-                }
+-            }
+-        }
+-        // The authoring surface is ONE list resolved with the compiler's
+-        // Model-first precedence: fields, then helpers, then message arms.
+-        // A model-side homonym therefore projects faithfully, but an
+-        // unbound message arm shadowed by either model binding cannot be
+-        // named by this list. Refuse that direction instead of silently
+-        // marking the model binding and leaving the arm bound.
+-        for (self.sidecar.msg.unbound) |name| {
+-            const also_field = for (model.fields) |field| {
+-                if (std.mem.eql(u8, field.name, name)) break true;
+-            } else false;
+-            const also_helper = for (self.sidecar.model_helpers) |helper| {
+-                if (std.mem.eql(u8, helper.name, name)) break true;
+-            } else false;
+-            if (also_field or also_helper) {
+-                self.diags.flag("msg.unbound", "\"{s}\" is an unbound message arm shadowed by a homonymous Model field or exported helper — the compiler resolves Model fields and helpers before message arms, so the projection's single unbound list cannot mark this arm; rename one side in the core source", .{name});
+-            }
+-        }
+-        if (self.diags.hasErrors()) return;
+-        if (field_unbound.items.len == 0 and helper_unbound.items.len == 0 and self.sidecar.msg.unbound.len == 0) return;
++        if (self.sidecar.model_unbound.len == 0 and self.sidecar.msg.unbound.len == 0) return;
++        // ScriptC library mode reads split entry-module declarations. The
++        // frontend has already resolved the authored viewUnbound vocabulary
++        // into these validated sidecar lists, so preserve each list exactly,
++        // including model field/helper interleaving and cross-list homonyms.
+         try self.raw(
+             \\
+-            \\// The unbound-list declaration, carried by the generator from the
+-            \\// author's own markings in the core module: message arms only the
+-            \\// host fires, and model fields and helpers only update logic reads.
+-            \\export const viewUnbound = [
++            \\// The split unbound declarations carry the frontend-resolved
++            \\// contract through the external ScriptC library compile.
++            \\export const modelUnbound = [
+             \\
+         );
+-        for (self.sidecar.msg.unbound) |name| {
+-            try self.print("  \"{s}\",\n", .{try tsString(self.arena, name)});
+-        }
+-        for (field_unbound.items) |name| {
++        for (self.sidecar.model_unbound) |name| {
+             try self.print("  \"{s}\",\n", .{try tsString(self.arena, name)});
+         }
+-        for (helper_unbound.items) |name| {
++        try self.raw("] as const;\n\nexport const msgUnbound = [\n");
++        for (self.sidecar.msg.unbound) |name| {
+             try self.print("  \"{s}\",\n", .{try tsString(self.arena, name)});
+         }
+-        try self.raw("];\n");
++        try self.raw("] as const;\n");
+     }
+ 
+     // ------------------------------------------------- helper wrappers
+@@ -3858,8 +3821,9 @@ test "facade emission is deterministic and carries the adapter surface" {
+     try testing.expect(std.mem.indexOf(u8, first, "export function subscriptions(): Uint8Array {") == null);
+     try testing.expect(std.mem.indexOf(u8, first, "export function model_snapshot(): Uint8Array {") != null);
+     try testing.expect(std.mem.indexOf(u8, first, "export function persist_snapshot(): Uint8Array {") != null);
+-    // The unbound list restates the author's markings.
+-    try testing.expect(std.mem.indexOf(u8, first, "export const viewUnbound = [\n  \"label_set\",\n];") != null);
++    // Split ScriptC conventions preserve the resolved unbound markings.
++    try testing.expect(std.mem.indexOf(u8, first, "export const modelUnbound = [\n] as const;") != null);
++    try testing.expect(std.mem.indexOf(u8, first, "export const msgUnbound = [\n  \"label_set\",\n] as const;") != null);
+     // Unwired channels stay out of the module.
+     try testing.expect(std.mem.indexOf(u8, first, "abi_frame_msg") == null);
+     try testing.expect(std.mem.indexOf(u8, first, "nscfPackMsg") == null);
+diff --git a/tools/corewire/sidecar.zig b/tools/corewire/sidecar.zig
+index 6d08723..315a5c0 100644
+--- a/tools/corewire/sidecar.zig
++++ b/tools/corewire/sidecar.zig
+@@ -34,7 +34,7 @@ pub const supported_format: i64 = 1;
+ /// The command-wire vocabulary generation the SDK's bridge speaks
+ /// (rt.zig `cmd_format_version`). A sidecar declaring a different
+ /// generation is refused at generate time.
+-pub const supported_wire_version: i64 = 7;
++pub const supported_wire_version: i64 = 8;
+ 
+ /// The C-ABI generation of the core entry points this generator binds
+ /// (core_abi.zig `abi_version`).
+diff --git a/packages/core/scripts/compiler_command.mjs b/packages/core/scripts/compiler_command.mjs
+index 1f26c4e..4dab338 100644
+--- a/packages/core/scripts/compiler_command.mjs
++++ b/packages/core/scripts/compiler_command.mjs
+@@ -67,5 +67,5 @@ export function publishedScriptcArgv(origin, options = {}) {
+     throw new Error("scriptc package's published binary entrypoint escapes its package");
+   }
+   if (!fs.statSync(target).isFile()) throw new Error("scriptc package's published binary entrypoint is missing");
+-  return [node, target];
++  return [node, "--stack-size=32768", target];
+ }
