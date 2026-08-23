@@ -202,7 +202,7 @@ try {
 
   requireHash(
     path.join(staging, "build", "app.zig"),
-    "37011067a171ccc753fc1f24ccaab951a4d5497c1bd3f315e795b93b8b85e766",
+    "a6b1746644967b724f5dc78ee2996631eca85e3d1781d2f8e9878ddead83e9eb",
   );
   run(process.execPath, [path.join(frameworkRoot, "scripts", "test-native-sdk-windows-coff-analysis.mjs"), staging]);
 

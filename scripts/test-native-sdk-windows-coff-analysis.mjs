@@ -29,4 +29,24 @@ if (analysis.includes("b.addTest(")) {
   throw new Error("Windows app analysis must not enter Zig test mode");
 }
 
-process.stdout.write("Native SDK Windows COFF analysis: PASS (executable on Windows, object elsewhere)\n");
+const exeRootStart = source.indexOf("const exe_root =");
+const exeRootEnd = source.indexOf("const exe = b.addExecutable", exeRootStart);
+if (exeRootStart < 0 || exeRootEnd < 0) throw new Error("Native SDK executable root block is missing");
+
+const exeRoot = source.slice(exeRootStart, exeRootEnd);
+const windowsDirectRoot = exeRoot.indexOf("if (target.result.os.tag == .windows) {");
+const cachedAppObject = exeRoot.indexOf("const app_code = b.addObject(.");
+if (windowsDirectRoot < 0 || cachedAppObject <= windowsDirectRoot) {
+  throw new Error("Windows must select the direct executable root before the non-Windows app-code cache");
+}
+for (const contract of [
+  "app_mod.addObject(markupDataObject(b, target, app_optimize, stage.markup_c));",
+  "break :root app_mod;",
+  "link_mod.addObject(app_code);",
+  "link_mod.addObject(markupDataObject(b, target, app_optimize, stage.markup_c));",
+  "addPlatformLinkSearchPaths(b, selected_platform, web_engine, cef_dir, link_mod);",
+]) {
+  if (!exeRoot.includes(contract)) throw new Error(`missing Windows COFF executable contract: ${contract}`);
+}
+
+process.stdout.write("Native SDK Windows COFF build graph: PASS (direct PE root, executable analysis)\n");
