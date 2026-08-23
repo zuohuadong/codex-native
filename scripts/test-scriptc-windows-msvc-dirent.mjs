@@ -102,8 +102,8 @@ int main(void) {
   int read_error = 0;
   if (!broken || scr_win_readdir_next(broken, &read_error) == NULL) return 19;
   if (!FindClose(broken->handle)) return 20;
-  if (scr_win_readdir_next(broken, &read_error) != NULL || read_error != EBADF) return 21;
   broken->handle = INVALID_HANDLE_VALUE;
+  if (scr_win_readdir_next(broken, &read_error) != NULL || read_error != EBADF) return 21;
   (void)closedir(broken);
 
   stage("release-environment");
