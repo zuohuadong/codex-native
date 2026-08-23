@@ -20,6 +20,7 @@ const source = path.join(installRoot, "node_modules", "@native-sdk", "cli");
 const artifactsRoot = path.join(sourceRoot, ".artifacts", "native-sdk");
 const destination = path.join(artifactsRoot, "0.9.5-patched");
 const runtimePatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-volt-runtime.patch");
+const windowsCoffAnalysisPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-windows-coff-analysis.patch");
 const scriptcPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-integer-provenance.patch");
 const scriptcWindowsCleanupPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-windows-cleanup.patch");
 const scriptcWindowsMsvcPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-windows-msvc.patch");
@@ -184,6 +185,7 @@ try {
   const applyParent = path.dirname(staging);
   const patches = [
     runtimePatch,
+    windowsCoffAnalysisPatch,
     scriptcPatch,
     scriptcWindowsCleanupPatch,
     scriptcWindowsMsvcPatch,
@@ -197,6 +199,12 @@ try {
     run("git", [...gitApply, "--check", patch], { cwd: staging, env: gitEnvironment });
     run("git", [...gitApply, patch], { cwd: staging, env: gitEnvironment });
   }
+
+  requireHash(
+    path.join(staging, "build", "app.zig"),
+    "37011067a171ccc753fc1f24ccaab951a4d5497c1bd3f315e795b93b8b85e766",
+  );
+  run(process.execPath, [path.join(frameworkRoot, "scripts", "test-native-sdk-windows-coff-analysis.mjs"), staging]);
 
   const patchedIntInfer = path.join(packages, "@scriptc", "compiler", "dist", "library", "int-infer.js");
   const patchedIntInferSha256 = sha256File(patchedIntInfer);
