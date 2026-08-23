@@ -21,6 +21,7 @@ const artifactsRoot = path.join(sourceRoot, ".artifacts", "native-sdk");
 const destination = path.join(artifactsRoot, "0.9.5-patched");
 const runtimePatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-volt-runtime.patch");
 const windowsCoffAnalysisPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-windows-coff-analysis.patch");
+const windowsMsvcHostPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-windows-msvc-host.patch");
 const scriptcPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-integer-provenance.patch");
 const scriptcWindowsCleanupPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-windows-cleanup.patch");
 const scriptcWindowsMsvcPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-windows-msvc.patch");
@@ -186,6 +187,7 @@ try {
   const patches = [
     runtimePatch,
     windowsCoffAnalysisPatch,
+    windowsMsvcHostPatch,
     scriptcPatch,
     scriptcWindowsCleanupPatch,
     scriptcWindowsMsvcPatch,
@@ -202,9 +204,24 @@ try {
 
   requireHash(
     path.join(staging, "build", "app.zig"),
-    "a6b1746644967b724f5dc78ee2996631eca85e3d1781d2f8e9878ddead83e9eb",
+    "5cd3ef4615494a4ca621a5af94081da133e839cecbc2812005e6a2dd9e8c71cc",
   );
   run(process.execPath, [path.join(frameworkRoot, "scripts", "test-native-sdk-windows-coff-analysis.mjs"), staging]);
+  requireHash(
+    path.join(staging, "src", "platform", "windows", "webview2_host.cpp"),
+    "fd6777dda5b1270673a1e1d18c680e306ef5aee9cb2179a701ca194080322df3",
+  );
+  requireHash(
+    path.join(staging, "src", "platform", "windows", "gpu_surface_renderer.h"),
+    "6e5b19b4b0daf36ef596d0bdf357bb854897919797c11ee3337ab6d8e3310c51",
+  );
+  requireHash(
+    path.join(staging, "src", "tooling", "templates.zig"),
+    "8dc21f857cf14fd91e9c1a04a1c8190446392e3557cbc897a53f98197f4ab696",
+  );
+  run(process.execPath, [path.join(frameworkRoot, "scripts", "test-native-sdk-windows-msvc-host.mjs"), staging], {
+    env: { NATIVE_ZIG: process.env.NATIVE_ZIG ?? "zig" },
+  });
 
   const patchedIntInfer = path.join(packages, "@scriptc", "compiler", "dist", "library", "int-infer.js");
   const patchedIntInferSha256 = sha256File(patchedIntInfer);

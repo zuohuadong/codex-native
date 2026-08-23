@@ -1,0 +1,64 @@
+diff --git a/build/app.zig b/build/app.zig
+index 7d983d7..e51f99f 100644
+--- a/build/app.zig
++++ b/build/app.zig
+@@ -2647,7 +2647,9 @@ fn linkPlatform(b: *std.Build, dep: *std.Build.Dependency, target: std.Build.Res
+             },
+         }
+         app_mod.linkSystemLibrary("c", .{});
+-        app_mod.linkSystemLibrary("c++", .{});
++        // Zig's bundled libc++ is not compatible with the MSVC ABI runtime.
++        // MSVC targets automatically link the system C++ standard library.
++        if (target.result.abi != .msvc) app_mod.linkSystemLibrary("c++", .{});
+         app_mod.linkSystemLibrary("user32", .{});
+         app_mod.linkSystemLibrary("gdi32", .{});
+         // Retained gpu_surface packets are composited into a hardware
+diff --git a/src/platform/windows/gpu_surface_renderer.h b/src/platform/windows/gpu_surface_renderer.h
+index f63f3a2..a6708b7 100644
+--- a/src/platform/windows/gpu_surface_renderer.h
++++ b/src/platform/windows/gpu_surface_renderer.h
+@@ -1,5 +1,8 @@
+ #pragma once
+-
++
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
+ #include <windows.h>
+-
++
+ #include <stddef.h>
+diff --git a/src/tooling/templates.zig b/src/tooling/templates.zig
+index e6f242a..c6721c7 100644
+--- a/src/tooling/templates.zig
++++ b/src/tooling/templates.zig
+@@ -1920,7 +1920,7 @@ fn buildZig(allocator: std.mem.Allocator, names: TemplateNames, framework_path:
+         \\        }
+         \\        app_mod.addCSourceFile(.{ .file = nativeSdkPath(b, native_sdk_path, "src/platform/windows/gpu_surface_renderer.cpp"), .flags = &.{ "-std=c++17" } });
+         \\        app_mod.linkSystemLibrary("c", .{});
+-        \\        app_mod.linkSystemLibrary("c++", .{});
++        \\        if (target.result.abi != .msvc) app_mod.linkSystemLibrary("c++", .{});
+         \\        app_mod.linkSystemLibrary("user32", .{});
+         \\        app_mod.linkSystemLibrary("gdi32", .{});
+         \\        app_mod.linkSystemLibrary("d2d1", .{});
+diff --git a/src/platform/windows/webview2_host.cpp b/src/platform/windows/webview2_host.cpp
+index dcab54e..eafabed 100644
+--- a/src/platform/windows/webview2_host.cpp
++++ b/src/platform/windows/webview2_host.cpp
+@@ -1,3 +1,6 @@
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
+ #include <windows.h>
+ #include <shellapi.h>
+ #include <shlobj.h>
+@@ -1737,6 +1740,8 @@ static bool emitShortcutForWindowId(Host *host, uint64_t window_id, WPARAM wpara
+     return emitShortcutForWindow(host, windowForId(host, window_id), wparam);
+ }
+-
++
++static uint32_t gpuModifierFlags();
++
+ // Emit one captured key as a `__capture__`-id shortcut event with the
+ // live modifier flags. Returns true when an event was emitted (the
+ // caller then swallows the WM_KEYDOWN). A bare modifier key (VK_SHIFT,
