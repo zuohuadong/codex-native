@@ -23,7 +23,7 @@ jobs:
     runs-on: macos-15
     steps:
       - name: Checkout CI repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout source main
         shell: bash
@@ -38,6 +38,7 @@ jobs:
             "$SOURCE_REPOSITORY" \
             source
           git -C source rev-parse HEAD
+          rm -rf source/.git
 
       - name: Install build dependencies
         shell: bash
@@ -69,7 +70,7 @@ jobs:
     runs-on: windows-2025
     steps:
       - name: Checkout CI repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout source main
         shell: pwsh
