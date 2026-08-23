@@ -217,7 +217,7 @@ try {
   );
   requireHash(
     path.join(packages, "@scriptc", "runtime", "src", "scr_lib.c"),
-    "abe2c46c428129175cce9f7ca41bc2f56b435e08832247ae3d687ee0966e019b",
+    "e7d4fc550c33911b4986333ad8a2d8157e483284f96828feff563b4ecb2e2652",
   );
   requireHash(
     path.join(packages, "@scriptc", "runtime", "src", "scr_win_dirent.h"),

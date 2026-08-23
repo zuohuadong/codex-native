@@ -1,5 +1,5 @@
 diff --git a/packages/core/node_modules/@scriptc/runtime/src/scr_lib.c b/packages/core/node_modules/@scriptc/runtime/src/scr_lib.c
-index a6019c7..0bd6033 100644
+index a6019c7..8bd601b 100644
 --- a/packages/core/node_modules/@scriptc/runtime/src/scr_lib.c
 +++ b/packages/core/node_modules/@scriptc/runtime/src/scr_lib.c
 @@ -17,7 +17,9 @@
@@ -48,7 +48,7 @@ index a6019c7..0bd6033 100644
 +#define stat _stat64
 +#define unlink _unlink
 +
-+typedef _mode_t scr_mode_t;
++typedef int scr_mode_t;
 +
 +static ssize_t scr_win_read(int fd, void *data, size_t length) {
 +  unsigned int bounded = scr_win_io_count(length);
