@@ -205,14 +205,14 @@ jobs:
           Remove-Item -Recurse -Force "$env:SOURCE_DIR/native-ui/.native/check" -ErrorAction SilentlyContinue
           Remove-Item -Recurse -Force "$env:SOURCE_DIR/native-ui/zig-out" -ErrorAction SilentlyContinue
           Set-Location "$env:SOURCE_DIR/native-ui"
-          node node_modules/@native-sdk/cli/bin/native.js test . --yes `
-            -Dtarget=x86_64-windows-msvc `
-            -Doptimize=ReleaseFast
           node node_modules/@native-sdk/cli/bin/native.js build . --yes `
             -Dtarget=x86_64-windows-msvc `
             -Doptimize=ReleaseFast
           node "$env:GITHUB_WORKSPACE/scripts/verify-windows-pe.mjs" `
             "$env:SOURCE_DIR/native-ui/zig-out/bin/volt-native-poc.exe"
+          node node_modules/@native-sdk/cli/bin/native.js test . --yes `
+            -Dtarget=x86_64-windows-msvc `
+            -Doptimize=ReleaseFast
 
       - name: Upload Windows PE
         uses: actions/upload-artifact@v7

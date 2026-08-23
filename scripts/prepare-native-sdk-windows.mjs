@@ -204,12 +204,12 @@ try {
 
   requireHash(
     path.join(staging, "build", "app.zig"),
-    "5cd3ef4615494a4ca621a5af94081da133e839cecbc2812005e6a2dd9e8c71cc",
+    "a1ebff2d146aa1aa5bf7e22df11d17b8a06f7c0e2f95bc3f0fce987ac58b983c",
   );
   run(process.execPath, [path.join(frameworkRoot, "scripts", "test-native-sdk-windows-coff-analysis.mjs"), staging]);
   requireHash(
     path.join(staging, "src", "platform", "windows", "webview2_host.cpp"),
-    "fd6777dda5b1270673a1e1d18c680e306ef5aee9cb2179a701ca194080322df3",
+    "62c61decf1630966eddbdd4f939efc2b7c93cece195e71046aabb3ec8d7421f9",
   );
   requireHash(
     path.join(staging, "src", "platform", "windows", "gpu_surface_renderer.h"),
@@ -217,7 +217,7 @@ try {
   );
   requireHash(
     path.join(staging, "src", "tooling", "templates.zig"),
-    "8dc21f857cf14fd91e9c1a04a1c8190446392e3557cbc897a53f98197f4ab696",
+    "7bf9d5ec6dddb88ac210b9c09263f1e130d2fd515bdb9eeb382cfd59d3b4c789",
   );
   run(process.execPath, [path.join(frameworkRoot, "scripts", "test-native-sdk-windows-msvc-host.mjs"), staging], {
     env: { NATIVE_ZIG: process.env.NATIVE_ZIG ?? "zig" },

@@ -34,18 +34,61 @@ const msvcRuntimeContract = 'if (target.result.abi != .msvc) app_mod.linkSystemL
 if (!appSource.includes(msvcRuntimeContract)) {
   fail("MSVC targets must use the system C++ runtime instead of Zig bundled libc++");
 }
+if (!appSource.includes('app_mod.linkSystemLibrary("mfuuid", .{});')) {
+  fail("Windows host must link the Media Foundation GUID library");
+}
+for (const unexpectedLibrary of ["uuid", "mmdevapi"]) {
+  if (appSource.includes(`app_mod.linkSystemLibrary("${unexpectedLibrary}", .{});`)) {
+    fail(`Windows host must not rely on ${unexpectedLibrary} for SDK GUID constants`);
+  }
+}
+if (!appSource.includes('exe.entry = .{ .symbol_name = "mainCRTStartup" };')) {
+  fail("Windows MSVC GUI executables must use mainCRTStartup");
+}
 const templatesSource = fs.readFileSync(templates, "utf8");
 if (!templatesSource.includes(msvcRuntimeContract)) {
   fail("generated wrappers must preserve the MSVC system C++ runtime contract");
 }
+if (!templatesSource.includes('app_mod.linkSystemLibrary("mfuuid", .{});')) {
+  fail("generated wrappers must link the Media Foundation GUID library");
+}
+for (const [entry, contract] of [
+  ["exe.entry", '\\\\            exe.entry = .{ .symbol_name = "mainCRTStartup" };'],
+  ["built.entry", '\\\\                built.entry = .{ .symbol_name = "mainCRTStartup" };'],
+]) {
+  if (!templatesSource.includes(contract)) {
+    fail(`generated wrappers must set ${entry} for Windows MSVC GUI executables`);
+  }
+}
 
 const webviewSource = fs.readFileSync(webviewHost, "utf8");
 requireBefore(webviewSource, "#define NOMINMAX", "#include <windows.h>", "webview2 host");
+requireBefore(webviewSource, "#include <initguid.h>", "#include <oleacc.h>", "accessibility GUID definitions");
 const modifierPrototype = "static uint32_t gpuModifierFlags();";
 const modifierCall = "event.shortcut_modifiers = gpuModifierFlags();";
 const modifierDefinition = "static uint32_t gpuModifierFlags() {";
 requireBefore(webviewSource, modifierPrototype, modifierCall, "shortcut modifier prototype");
 requireBefore(webviewSource, modifierCall, modifierDefinition, "shortcut modifier definition");
+for (const uuidContract of [
+  "__uuidof(MMDeviceEnumerator)",
+  "__uuidof(IMMDeviceEnumerator)",
+  "__uuidof(IAudioClient)",
+  "__uuidof(IAudioCaptureClient)",
+  "__uuidof(IActivateAudioInterfaceCompletionHandler)",
+]) {
+  if (!webviewSource.includes(uuidContract)) fail(`missing Windows SDK UUID contract: ${uuidContract}`);
+}
+for (const unresolvedReference of [
+  "CoCreateInstance(CLSID_MMDeviceEnumerator",
+  "IID_IMMDeviceEnumerator, reinterpret_cast",
+  "IID_IAudioClient,",
+  "IID_IAudioCaptureClient,",
+  "IID_IActivateAudioInterfaceCompletionHandler)",
+]) {
+  if (webviewSource.includes(unresolvedReference)) {
+    fail(`Windows host still references external GUID data: ${unresolvedReference}`);
+  }
+}
 
 const gpuHeaderSource = fs.readFileSync(gpuHeader, "utf8");
 requireBefore(gpuHeaderSource, "#define NOMINMAX", "#include <windows.h>", "GPU renderer header");
@@ -77,7 +120,7 @@ function requireAmd64Coff(file, label) {
   }
 }
 
-function requireAmd64Pe(file, label) {
+function requireAmd64Pe(file, label, expectedSubsystem) {
   if (!fs.existsSync(file)) fail(`${label}: compiler succeeded without producing ${file}`);
   const bytes = fs.readFileSync(file);
   if (bytes.length < 512 || bytes.toString("ascii", 0, 2) !== "MZ") fail(`${label}: missing MZ header`);
@@ -86,6 +129,11 @@ function requireAmd64Pe(file, label) {
     fail(`${label}: missing PE signature`);
   }
   if (bytes.readUInt16LE(peOffset + 4) !== 0x8664) fail(`${label}: expected AMD64 PE machine 0x8664`);
+  const optionalHeader = peOffset + 24;
+  if (bytes.readUInt16LE(optionalHeader) !== 0x20b) fail(`${label}: expected PE32+ optional header`);
+  if (expectedSubsystem !== undefined && bytes.readUInt16LE(optionalHeader + 68) !== expectedSubsystem) {
+    fail(`${label}: expected subsystem ${expectedSubsystem}`);
+  }
 }
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "native-sdk-windows-msvc-host-"));
@@ -115,8 +163,48 @@ try {
   if (probeRun.status !== 0 || probeRun.stdout !== "volt:native:2") {
     fail(`MSVC STL PE returned ${probeRun.status}/${JSON.stringify(probeRun.stdout)}`);
   }
+
+  const guiProbeSource = path.join(scratch, "windows_gui_guid_probe.cpp");
+  const guiProbeExecutable = path.join(scratch, "windows_gui_guid_probe.exe");
+  fs.writeFileSync(guiProbeSource, `#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <initguid.h>
+#include <oleacc.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mmdeviceapi.h>
+#include <audioclient.h>
+static const GUID *volatile linked_guids[] = {
+  &CLSID_AccPropServices,
+  &PROPID_ACC_NAME,
+  &IID_IMFMediaSource,
+  &IID_IMFAudioStreamVolume,
+  &IID_IMFPresentationClock,
+  &IID_IMFAsyncCallback,
+};
+int main() {
+  volatile unsigned long value = 0;
+  for (const GUID *guid : linked_guids) value ^= guid->Data1;
+  value ^= __uuidof(MMDeviceEnumerator).Data1;
+  value ^= __uuidof(IMMDeviceEnumerator).Data1;
+  value ^= __uuidof(IAudioClient).Data1;
+  value ^= __uuidof(IAudioCaptureClient).Data1;
+  value ^= __uuidof(IActivateAudioInterfaceCompletionHandler).Data1;
+  return 0;
+}
+`);
+  runZig("Windows GUI/GUID PE", [
+    "build-exe", "-fllvm", `-femit-bin=${guiProbeExecutable}`, "-target", "x86_64-windows-msvc", "-OReleaseFast",
+    "-lc", "-lmfuuid", "--subsystem", "windows", "-fentry=mainCRTStartup",
+    "-cflags", "-std=c++17", "--", guiProbeSource,
+  ]);
+  requireAmd64Pe(guiProbeExecutable, "Windows GUI/GUID PE", 2);
+  const guiProbeRun = spawnSync(guiProbeExecutable, [], { encoding: "utf8", stdio: "pipe" });
+  if (guiProbeRun.status !== 0) fail(`Windows GUI/GUID PE returned ${guiProbeRun.status}`);
 } finally {
   fs.rmSync(scratch, { recursive: true, force: true });
 }
 
-process.stdout.write("Native SDK Windows MSVC host: PASS (2/2 COFF objects, system STL PE)\n");
+process.stdout.write("Native SDK Windows MSVC host: PASS (2/2 COFF objects, system STL PE, GUI/GUID PE)\n");

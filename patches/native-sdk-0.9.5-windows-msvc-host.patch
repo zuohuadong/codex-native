@@ -1,8 +1,18 @@
 diff --git a/build/app.zig b/build/app.zig
-index 7d983d7..e51f99f 100644
+index 7d983d7..df48552 100644
 --- a/build/app.zig
 +++ b/build/app.zig
-@@ -2647,7 +2647,9 @@ fn linkPlatform(b: *std.Build, dep: *std.Build.Dependency, target: std.Build.Res
+@@ -1848,6 +1848,9 @@ pub fn addAppArtifacts(b: *std.Build, dep: *std.Build.Dependency, app_options: A
+     // `app.exe > log 2>&1` keep their logs either way.
+     if (target.result.os.tag == .windows and app_optimize != .Debug) {
+         exe.subsystem = .windows;
++        if (target.result.abi == .msvc) {
++            exe.entry = .{ .symbol_name = "mainCRTStartup" };
++        }
+     }
+     linkPlatform(b, dep, target, app_mod, exe, selected_platform, web_engine, web_layer, cef_dir, cef_auto_install);
+     const install = b.addInstallArtifact(exe, .{});
+@@ -2647,7 +2650,9 @@ fn linkPlatform(b: *std.Build, dep: *std.Build.Dependency, target: std.Build.Res
              },
          }
          app_mod.linkSystemLibrary("c", .{});
@@ -13,6 +23,14 @@ index 7d983d7..e51f99f 100644
          app_mod.linkSystemLibrary("user32", .{});
          app_mod.linkSystemLibrary("gdi32", .{});
          // Retained gpu_surface packets are composited into a hardware
+@@ -2671,6 +2676,7 @@ fn linkPlatform(b: *std.Build, dep: *std.Build.Dependency, target: std.Build.Res
+         // + streaming audio renderer) and WinHTTP (the cache fill).
+         app_mod.linkSystemLibrary("mf", .{});
+         app_mod.linkSystemLibrary("mfplat", .{});
++        app_mod.linkSystemLibrary("mfuuid", .{});
+         app_mod.linkSystemLibrary("winhttp", .{});
+         if (web_engine == .chromium) app_mod.linkSystemLibrary("libcef", .{});
+     }
 diff --git a/src/platform/windows/gpu_surface_renderer.h b/src/platform/windows/gpu_surface_renderer.h
 index f63f3a2..a6708b7 100644
 --- a/src/platform/windows/gpu_surface_renderer.h
@@ -28,21 +46,8 @@ index f63f3a2..a6708b7 100644
 -
 +
  #include <stddef.h>
-diff --git a/src/tooling/templates.zig b/src/tooling/templates.zig
-index e6f242a..c6721c7 100644
---- a/src/tooling/templates.zig
-+++ b/src/tooling/templates.zig
-@@ -1920,7 +1920,7 @@ fn buildZig(allocator: std.mem.Allocator, names: TemplateNames, framework_path:
-         \\        }
-         \\        app_mod.addCSourceFile(.{ .file = nativeSdkPath(b, native_sdk_path, "src/platform/windows/gpu_surface_renderer.cpp"), .flags = &.{ "-std=c++17" } });
-         \\        app_mod.linkSystemLibrary("c", .{});
--        \\        app_mod.linkSystemLibrary("c++", .{});
-+        \\        if (target.result.abi != .msvc) app_mod.linkSystemLibrary("c++", .{});
-         \\        app_mod.linkSystemLibrary("user32", .{});
-         \\        app_mod.linkSystemLibrary("gdi32", .{});
-         \\        app_mod.linkSystemLibrary("d2d1", .{});
 diff --git a/src/platform/windows/webview2_host.cpp b/src/platform/windows/webview2_host.cpp
-index dcab54e..eafabed 100644
+index dcab54e..1532a19 100644
 --- a/src/platform/windows/webview2_host.cpp
 +++ b/src/platform/windows/webview2_host.cpp
 @@ -1,3 +1,6 @@
@@ -52,7 +57,30 @@ index dcab54e..eafabed 100644
  #include <windows.h>
  #include <shellapi.h>
  #include <shlobj.h>
-@@ -1737,6 +1740,8 @@ static bool emitShortcutForWindowId(Host *host, uint64_t window_id, WPARAM wpara
+@@ -5,6 +8,7 @@
+ #include <wincred.h>
+ #include <objbase.h>
+ #include <commctrl.h>
++#include <initguid.h>
+ #include <oleacc.h>
+ #include <wincodec.h>
+ #include <uxtheme.h>
+@@ -63,11 +67,8 @@ using Microsoft::WRL::ComPtr;
+ #endif
+-
++
+ /* Media Foundation (the audio backend below) + WinHTTP (the audio cache
+- * fill). initguid.h makes the DEFINE_GUID declarations in the MF headers
+- * instantiate here (selectany), so no separate GUID import library is
+- * needed — the same self-containment the WIC decoder uses further down.
+- * Included last so only the Media Foundation GUIDs are affected. */
+-#include <initguid.h>
++ * fill). Interface IIDs declared as external data come from mfuuid.lib;
++ * initguid.h above instantiates the DEFINE_GUID constants used by oleacc. */
+ #include <mfapi.h>
+ #include <mfidl.h>
+ #include <mferror.h>
+@@ -1737,6 +1738,8 @@ static bool emitShortcutForWindowId(Host *host, uint64_t window_id, WPARAM wpara
      return emitShortcutForWindow(host, windowForId(host, window_id), wparam);
  }
 -
@@ -62,3 +90,121 @@ index dcab54e..eafabed 100644
  // Emit one captured key as a `__capture__`-id shortcut event with the
  // live modifier flags. Returns true when an event was emitted (the
  // caller then swallows the WM_KEYDOWN). A bare modifier key (VK_SHIFT,
+@@ -4161,7 +4164,7 @@ struct AudioSpectrumActivateWaiter final : public IActivateAudioInterfaceComplet
+-
++
+     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **out) override {
+         if (!out) return E_POINTER;
+-        if (riid == IID_IUnknown || riid == IID_IActivateAudioInterfaceCompletionHandler) {
++        if (riid == IID_IUnknown || riid == __uuidof(IActivateAudioInterfaceCompletionHandler)) {
+             *out = static_cast<IActivateAudioInterfaceCompletionHandler *>(this);
+             AddRef();
+             return S_OK;
+@@ -4216,7 +4219,7 @@ static HRESULT audioSpectrumActivateClient(IAudioClient **out_client) {
+         return E_FAIL;
+     }
+     IActivateAudioInterfaceAsyncOperation *operation = nullptr;
+-    HRESULT hr = activate(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, IID_IAudioClient, &prop, waiter, &operation);
++    HRESULT hr = activate(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, __uuidof(IAudioClient), &prop, waiter, &operation);
+     if (SUCCEEDED(hr) && operation) {
+         /* Activation completes in milliseconds when it completes at all;
+          * the deadline only guards against a wedged audio service. A
+@@ -4226,7 +4229,7 @@ static HRESULT audioSpectrumActivateClient(IAudioClient **out_client) {
+             HRESULT activated = E_FAIL;
+             IUnknown *unknown = nullptr;
+             if (SUCCEEDED(operation->GetActivateResult(&activated, &unknown)) && SUCCEEDED(activated) && unknown) {
+-                unknown->QueryInterface(IID_IAudioClient, reinterpret_cast<void **>(out_client));
++                unknown->QueryInterface(__uuidof(IAudioClient), reinterpret_cast<void **>(out_client));
+             }
+             if (unknown) unknown->Release();
+             hr = *out_client ? S_OK : (FAILED(activated) ? activated : E_NOINTERFACE);
+@@ -4403,7 +4406,7 @@ static void audioSpectrumCaptureThread(std::shared_ptr<AudioSpectrumShared> shar
+         if (!ready) break;
+         if (FAILED(audioSpectrumActivateClient(&client)) || !client) break;
+         if (FAILED(audioSpectrumInitializeClient(client, ready))) break;
+-        if (FAILED(client->GetService(IID_IAudioCaptureClient, reinterpret_cast<void **>(&capture))) || !capture) break;
++        if (FAILED(client->GetService(__uuidof(IAudioCaptureClient), reinterpret_cast<void **>(&capture))) || !capture) break;
+         if (FAILED(client->Start())) break;
+         running = true;
+     } while (false);
+@@ -4568,11 +4571,11 @@ static void audioCaptureThread(std::shared_ptr<AudioCaptureShared> shared) {
+     HANDLE ready = nullptr;
+     bool running = false;
+     do {
+-        if (FAILED(CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_ALL,
+-                IID_IMMDeviceEnumerator, reinterpret_cast<void **>(&enumerator))) || !enumerator) break;
++        if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
++                __uuidof(IMMDeviceEnumerator), reinterpret_cast<void **>(&enumerator))) || !enumerator) break;
+         const EDataFlow flow = shared->source == 1 ? eRender : eCapture;
+         if (FAILED(enumerator->GetDefaultAudioEndpoint(flow, eConsole, &device)) || !device) break;
+-        if (FAILED(device->Activate(IID_IAudioClient, CLSCTX_ALL, nullptr,
++        if (FAILED(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                 reinterpret_cast<void **>(&client))) || !client) break;
+         WAVEFORMATEX format = {};
+         format.wFormatTag = WAVE_FORMAT_PCM;
+@@ -4588,7 +4591,7 @@ static void audioCaptureThread(std::shared_ptr<AudioCaptureShared> shared) {
+         if (FAILED(client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 1000000, 0, &format, nullptr))) break;
+         ready = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+         if (!ready || FAILED(client->SetEventHandle(ready))) break;
+-        if (FAILED(client->GetService(IID_IAudioCaptureClient, reinterpret_cast<void **>(&capture))) || !capture) break;
++        if (FAILED(client->GetService(__uuidof(IAudioCaptureClient), reinterpret_cast<void **>(&capture))) || !capture) break;
+         if (FAILED(client->Start())) break;
+         running = true;
+     } while (false);
+diff --git a/src/tooling/templates.zig b/src/tooling/templates.zig
+index e6f242a..8513315 100644
+--- a/src/tooling/templates.zig
++++ b/src/tooling/templates.zig
+@@ -1493,6 +1493,9 @@ fn buildZig(allocator: std.mem.Allocator, names: TemplateNames, framework_path:
+         \\    // AUTO-allocation is subsystem-gated.
+         \\    if (target.result.os.tag == .windows and optimize != .Debug) {
+         \\        exe.subsystem = .windows;
++        \\        if (target.result.abi == .msvc) {
++        \\            exe.entry = .{ .symbol_name = "mainCRTStartup" };
++        \\        }
+         \\    }
+         \\    linkPlatform(b, target, app_mod, exe, selected_platform, web_engine, web_layer, native_sdk_path, cef_dir, cef_auto_install);
+         \\    b.installArtifact(exe);
+@@ -1551,6 +1554,9 @@ fn buildZig(allocator: std.mem.Allocator, names: TemplateNames, framework_path:
+         \\        // exe's own mode: release-shaped Windows exes are GUI-subsystem.
+         \\        if (target.result.os.tag == .windows and package_optimize != .Debug) {
+         \\            built.subsystem = .windows;
++        \\            if (target.result.abi == .msvc) {
++        \\                built.entry = .{ .symbol_name = "mainCRTStartup" };
++        \\            }
+         \\        }
+         \\        linkPlatform(b, target, package_app_mod, built, selected_platform, web_engine, web_layer, native_sdk_path, cef_dir, cef_auto_install);
+         \\        break :pkg built;
+@@ -1920,7 +1926,7 @@ fn buildZig(allocator: std.mem.Allocator, names: TemplateNames, framework_path:
+         \\        }
+         \\        app_mod.addCSourceFile(.{ .file = nativeSdkPath(b, native_sdk_path, "src/platform/windows/gpu_surface_renderer.cpp"), .flags = &.{ "-std=c++17" } });
+         \\        app_mod.linkSystemLibrary("c", .{});
+-        \\        app_mod.linkSystemLibrary("c++", .{});
++        \\        if (target.result.abi != .msvc) app_mod.linkSystemLibrary("c++", .{});
+         \\        app_mod.linkSystemLibrary("user32", .{});
+         \\        app_mod.linkSystemLibrary("gdi32", .{});
+         \\        app_mod.linkSystemLibrary("d2d1", .{});
+@@ -1938,6 +1944,7 @@ fn buildZig(allocator: std.mem.Allocator, names: TemplateNames, framework_path:
+         \\        // + streaming audio renderer) and WinHTTP (the cache fill).
+         \\        app_mod.linkSystemLibrary("mf", .{});
+         \\        app_mod.linkSystemLibrary("mfplat", .{});
++        \\        app_mod.linkSystemLibrary("mfuuid", .{});
+         \\        app_mod.linkSystemLibrary("winhttp", .{});
+         \\        if (web_engine == .chromium) app_mod.linkSystemLibrary("libcef", .{});
+         \\    }
+@@ -4210,6 +4217,7 @@ test "writeDefaultApp emits Vite project files" {
+     // the SDK build graph) so packaged scaffold apps never flash a console.
+     try std.testing.expect(std.mem.indexOf(u8, build_zig_text, "if (target.result.os.tag == .windows and optimize != .Debug) {") != null);
+     try std.testing.expect(std.mem.indexOf(u8, build_zig_text, "exe.subsystem = .windows;") != null);
++    try std.testing.expect(std.mem.indexOf(u8, build_zig_text, "exe.entry = .{ .symbol_name = \\"mainCRTStartup\\" };") != null);
+     // The package step wraps its own release-shaped exe: Debug stays the
+     // run/dev default, but `zig build package` must never ship a Debug
+     // (console-subsystem) binary unless the user pinned the mode
+@@ -4222,6 +4230,7 @@ test "writeDefaultApp emits Vite project files" {
+     try std.testing.expect(std.mem.indexOf(u8, build_zig_text, "const package_exe = if (package_optimize == optimize) exe else pkg: {") != null);
+     try std.testing.expect(std.mem.indexOf(u8, build_zig_text, "if (target.result.os.tag == .windows and package_optimize != .Debug) {") != null);
+     try std.testing.expect(std.mem.indexOf(u8, build_zig_text, "built.subsystem = .windows;") != null);
++    try std.testing.expect(std.mem.indexOf(u8, build_zig_text, "built.entry = .{ .symbol_name = \\"mainCRTStartup\\" };") != null);
+     try std.testing.expect(std.mem.indexOf(u8, build_zig_text, "package.addFileArg(package_exe.getEmittedBin());") != null);
+     try std.testing.expect(std.mem.indexOf(u8, build_zig_text, "package.step.dependOn(&package_exe.step);") != null);
+     try std.testing.expect(std.mem.indexOf(u8, build_zig_text, "package_optimize_name,") != null);
