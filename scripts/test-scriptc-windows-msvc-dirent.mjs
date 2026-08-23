@@ -41,7 +41,7 @@ try {
 #include <string.h>
 
 static void stage(const char *name) {
-  fprintf(stderr, "[scriptc-dirent-stage] %s\n", name);
+  fprintf(stderr, "[scriptc-dirent-stage] %s\\n", name);
   fflush(stderr);
 }
 
