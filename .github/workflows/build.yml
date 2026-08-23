@@ -63,6 +63,11 @@ jobs:
           VOLT_SOURCE_ROOT="$SOURCE_DIR" \
             VOLT_NATIVE_SDK_ALLOW_INVENTORY_PUBLISH=1 \
             ./scripts/prepare-native-sdk.sh --print-path
+          sed -i '' \
+            's|../.artifacts/native-sdk/0.9.1-patched|../.artifacts/native-sdk/0.9.5-patched|' \
+            "$SOURCE_DIR/native-ui/build.zig.zon"
+          grep -F '../.artifacts/native-sdk/0.9.5-patched' \
+            "$SOURCE_DIR/native-ui/build.zig.zon"
 
       - name: Build macOS binary
         shell: bash
