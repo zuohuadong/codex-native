@@ -68,10 +68,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd "$SOURCE_DIR"
+          cd "$SOURCE_DIR/native-ui"
           VOLT_NATIVE_SDK_REQUIRE_REUSE=1 \
-            ./scripts/native-patched.sh build native-ui --yes -Doptimize=ReleaseFast
-          file native-ui/zig-out/bin/volt-native-poc
+            ../scripts/native-patched.sh build . --yes -Doptimize=ReleaseFast
+          file zig-out/bin/volt-native-poc
 
       - name: Upload macOS binary
         uses: actions/upload-artifact@v4
@@ -83,6 +83,7 @@ jobs:
 
   windows:
     name: Windows x64
+    if: ${{ vars.ENABLE_WINDOWS_GUI_BUILD == 'true' }}
     runs-on: windows-2025
     steps:
       - name: Checkout CI repository
