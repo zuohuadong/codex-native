@@ -41,6 +41,7 @@ jobs:
             "$SOURCE_REPOSITORY" \
             "$SOURCE_DIR"
           git -C "$SOURCE_DIR" rev-parse HEAD
+          rm -rf "$SOURCE_DIR/.git"
 
       - name: Set up Node.js 24
         uses: actions/setup-node@v4
