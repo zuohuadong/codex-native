@@ -56,6 +56,13 @@ jobs:
           cd "$SOURCE_DIR/native-ui"
           bun install --frozen-lockfile
 
+      - name: Prefetch Rust dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+          cargo fetch --locked --target aarch64-apple-darwin
+
       - name: Prepare patched Native SDK
         shell: bash
         run: |
