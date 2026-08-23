@@ -1,0 +1,14 @@
+diff --git a/packages/core/node_modules/@scriptc/runtime/src/scr_runtime.h b/packages/core/node_modules/@scriptc/runtime/src/scr_runtime.h
+--- a/packages/core/node_modules/@scriptc/runtime/src/scr_runtime.h
++++ b/packages/core/node_modules/@scriptc/runtime/src/scr_runtime.h
+@@ -15,6 +15,10 @@
+ #include <string.h>    /* memcpy in the inline slot accessors */
+ #include <sys/types.h> /* ssize_t in the transport ops table */
+ 
++#if defined(_WIN32) && defined(_MSC_VER)
++typedef ptrdiff_t ssize_t;
++#endif
++
+ /* ── libc shims ─────────────────────────────────────────────────────────
+  * Win32's missing POSIX/BSD functions live in scr_win.c. Zig's musl sysroot
+  * additionally lacks arc4random_buf; scr_musl.c supplies it from Linux's
