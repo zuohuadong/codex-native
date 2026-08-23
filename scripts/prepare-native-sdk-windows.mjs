@@ -21,6 +21,7 @@ const artifactsRoot = path.join(sourceRoot, ".artifacts", "native-sdk");
 const destination = path.join(artifactsRoot, "0.9.5-patched");
 const runtimePatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-volt-runtime.patch");
 const scriptcPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-integer-provenance.patch");
+const scriptcWindowsCleanupPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-windows-cleanup.patch");
 const typescriptPlatformPackage = process.platform === "win32"
   ? "typescript-win32-x64"
   : process.platform === "darwin"
@@ -126,6 +127,7 @@ requireHash(path.join(installRoot, "node_modules", "scriptc", "dist", "bootstrap
 requireHash(path.join(installRoot, "node_modules", "@scriptc", "compiler", "package.json"), "b7a11495ac1f635f54d2f7dc234d74410d51d6e2c0e7d24c21deac65987b5379");
 requireHash(path.join(installRoot, "node_modules", "@scriptc", "compiler", "dist", "index.js"), "acc7d321f0d760a3b26670a0a77c8e82136ac15645097030db784281ac8d172b");
 requireHash(path.join(installRoot, "node_modules", "@scriptc", "compiler", "dist", "library", "int-infer.js"), "13c4106299c17803625a9554bf5a56c9f210159f45b76c465de5b1ecb4d50fb5");
+requireHash(path.join(installRoot, "node_modules", "@scriptc", "compiler", "dist", "backend", "cc.js"), "28ac9db898a6af58669d19902f878c1a283ac2d52263dd7fc70a4d569407a6f6");
 requireHash(path.join(installRoot, "node_modules", "@scriptc", "runtime", "package.json"), "4024f28a899d2f48faac3b8521eb1f774d4dd8c83ef14d6595da828c40d35e83");
 requireHash(path.join(installRoot, "node_modules", "typescript", "package.json"), "3722b30210616a13a3213ded11575ba6b2dbab10c32a5ef67afca8513e27017e");
 requireHash(path.join(installRoot, "node_modules", "typescript", "bin", "tsc"), "2219f428a7e55aaf1f7ad85b9b0f0cf5078aeb76ccc9a7c6036c92d48f492ffd");
@@ -165,7 +167,7 @@ try {
   );
 
   const applyParent = path.dirname(staging);
-  for (const patch of [runtimePatch, scriptcPatch]) {
+  for (const patch of [runtimePatch, scriptcPatch, scriptcWindowsCleanupPatch]) {
     const gitEnvironment = { GIT_CEILING_DIRECTORIES: applyParent };
     const gitApply = ["-c", "core.autocrlf=false", "-c", "core.eol=lf", "apply", "--no-index"];
     run("git", [...gitApply, "--check", patch], { cwd: staging, env: gitEnvironment });
@@ -177,6 +179,10 @@ try {
   if (patchedIntInferSha256 !== "23dbcdc070f122d897cad6042ec79025e4292e89eab5b01e4d2b00badf839143") {
     throw new Error(`patched ScriptC integer provenance hash drifted: ${patchedIntInferSha256}`);
   }
+  requireHash(
+    path.join(packages, "@scriptc", "compiler", "dist", "backend", "cc.js"),
+    "d47b8255943ced6c5cf2969ff9502fbf7b0d7e05ec347922e8b68c1720b0e3b8",
+  );
   run(process.execPath, [
     path.join(frameworkRoot, "scripts", "test-native-sdk-scriptc-integer-provenance.mjs"),
     pathToFileURL(patchedIntInfer).href,
@@ -193,7 +199,7 @@ try {
     sourceTreeSha256: sourceTreeSha256(source),
     host: "windows-x64",
     publishedPayloadTreeSha256,
-    patches: [runtimePatch, scriptcPatch].map((file) => ({ path: path.basename(file), sha256: sha256File(file) })),
+    patches: [runtimePatch, scriptcPatch, scriptcWindowsCleanupPatch].map((file) => ({ path: path.basename(file), sha256: sha256File(file) })),
   }, null, 2)}\n`);
   if (payloadTreeSha256(staging) !== publishedPayloadTreeSha256) throw new Error("published payload tree hash drifted");
   makeFilesReadOnly(staging);

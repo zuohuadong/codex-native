@@ -1,0 +1,12 @@
+diff --git a/packages/core/node_modules/@scriptc/compiler/dist/backend/cc.js b/packages/core/node_modules/@scriptc/compiler/dist/backend/cc.js
+--- a/packages/core/node_modules/@scriptc/compiler/dist/backend/cc.js
++++ b/packages/core/node_modules/@scriptc/compiler/dist/backend/cc.js
+@@ -1296,7 +1296,7 @@ export async function compileLibraryArchive(opts) {
+             }
+         }
+         finally {
+-            await rm(buildDir, { recursive: true, force: true });
++            await rm(buildDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+         }
+     }
+     finally {
