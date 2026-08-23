@@ -1,0 +1,31 @@
+diff --git a/packages/core/node_modules/@scriptc/runtime/src/scr_path.c b/packages/core/node_modules/@scriptc/runtime/src/scr_path.c
+--- a/packages/core/node_modules/@scriptc/runtime/src/scr_path.c
++++ b/packages/core/node_modules/@scriptc/runtime/src/scr_path.c
+@@ -22,5 +22,10 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#ifdef _WIN32
++#include <direct.h>
++#define getcwd _getcwd
++#else
+ #include <unistd.h>
++#endif
+ 
+diff --git a/packages/core/node_modules/@scriptc/runtime/src/scr_url.c b/packages/core/node_modules/@scriptc/runtime/src/scr_url.c
+--- a/packages/core/node_modules/@scriptc/runtime/src/scr_url.c
++++ b/packages/core/node_modules/@scriptc/runtime/src/scr_url.c
+@@ -33,12 +33,12 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+-#include <unistd.h>
+ #ifdef _WIN32
+ #include <winsock2.h>
+ #include <ws2tcpip.h>
+ #else
+ #include <arpa/inet.h>
++#include <unistd.h>
+ #endif
+ 
+ ScrUrl *scr_url_retain(ScrUrl *u) {

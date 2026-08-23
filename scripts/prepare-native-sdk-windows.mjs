@@ -24,6 +24,8 @@ const scriptcPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scrip
 const scriptcWindowsCleanupPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-windows-cleanup.patch");
 const scriptcWindowsMsvcPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-windows-msvc.patch");
 const scriptcWindowsTimePatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-windows-time.patch");
+const scriptcWindowsMsvcHeadersPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-windows-msvc-headers.patch");
+const scriptcWindowsMsvcLibPatch = path.join(frameworkRoot, "patches", "native-sdk-0.9.5-scriptc-windows-msvc-lib.patch");
 const typescriptPlatformPackage = process.platform === "win32"
   ? "typescript-win32-x64"
   : process.platform === "darwin"
@@ -133,6 +135,15 @@ requireHash(path.join(installRoot, "node_modules", "@scriptc", "compiler", "dist
 requireHash(path.join(installRoot, "node_modules", "@scriptc", "runtime", "package.json"), "4024f28a899d2f48faac3b8521eb1f774d4dd8c83ef14d6595da828c40d35e83");
 requireHash(path.join(installRoot, "node_modules", "@scriptc", "runtime", "src", "scr_runtime.h"), "fdb097e59a6167a1b8eca90d7cdb4f3763d2b33abcc9cb88e649eed1d24fcbfa");
 requireHash(path.join(installRoot, "node_modules", "@scriptc", "runtime", "src", "scr_win.c"), "373290aafc62ec83aecaacb031058ca606cbe6f2326eb38d2043c60e86a4a2ea");
+requireHash(path.join(installRoot, "node_modules", "@scriptc", "runtime", "src", "scr_lib.c"), "99fd85caee7ebd82b39529ad8f0007bd10b46af14d9cbb7cf9e8d3f93a0004e5");
+requireHash(path.join(installRoot, "node_modules", "@scriptc", "runtime", "src", "scr_path.c"), "35e98f92126b3c50ecaf790a6e77e22295a1e40485cb2392f24829f0438f2d03");
+requireHash(path.join(installRoot, "node_modules", "@scriptc", "runtime", "src", "scr_url.c"), "890d1160206307fba774b2630385ad3381df4501826eacd1e281e561af0f6619");
+if (fs.existsSync(path.join(installRoot, "node_modules", "@scriptc", "runtime", "src", "scr_win_dirent.h"))) {
+  throw new Error("unexpected upstream scr_win_dirent.h; rebase the Windows MSVC overlay explicitly");
+}
+if (fs.existsSync(path.join(installRoot, "node_modules", "@scriptc", "runtime", "src", "scr_win_msvc.h"))) {
+  throw new Error("unexpected upstream scr_win_msvc.h; rebase the Windows MSVC overlay explicitly");
+}
 requireHash(path.join(installRoot, "node_modules", "typescript", "package.json"), "3722b30210616a13a3213ded11575ba6b2dbab10c32a5ef67afca8513e27017e");
 requireHash(path.join(installRoot, "node_modules", "typescript", "bin", "tsc"), "2219f428a7e55aaf1f7ad85b9b0f0cf5078aeb76ccc9a7c6036c92d48f492ffd");
 requireHash(path.join(installRoot, "node_modules", "typescript5", "package.json"), "822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6");
@@ -177,6 +188,8 @@ try {
     scriptcWindowsCleanupPatch,
     scriptcWindowsMsvcPatch,
     scriptcWindowsTimePatch,
+    scriptcWindowsMsvcHeadersPatch,
+    scriptcWindowsMsvcLibPatch,
   ];
   for (const patch of patches) {
     const gitEnvironment = { GIT_CEILING_DIRECTORIES: applyParent };
@@ -202,7 +215,31 @@ try {
     path.join(packages, "@scriptc", "runtime", "src", "scr_win.c"),
     "e32c7aae5c69e0b30cdaf5b434716d51c4475b7bb66def3a6ddb05080f6ed6fe",
   );
+  requireHash(
+    path.join(packages, "@scriptc", "runtime", "src", "scr_lib.c"),
+    "abe2c46c428129175cce9f7ca41bc2f56b435e08832247ae3d687ee0966e019b",
+  );
+  requireHash(
+    path.join(packages, "@scriptc", "runtime", "src", "scr_win_dirent.h"),
+    "fbc93a6d6e89985918fb4917e52a1d916860d8a6d6649e8fc3d5f5f340965d12",
+  );
+  requireHash(
+    path.join(packages, "@scriptc", "runtime", "src", "scr_win_msvc.h"),
+    "13a9b37bcf69501346af57773f858dac2490e2b1a8bd57825a468a2fedab80a9",
+  );
+  requireHash(
+    path.join(packages, "@scriptc", "runtime", "src", "scr_path.c"),
+    "0e4bf1db861632c91df1de3660124f72a9c4125255ae1819b01ecb741d078731",
+  );
+  requireHash(
+    path.join(packages, "@scriptc", "runtime", "src", "scr_url.c"),
+    "64b714282f15bae9abd898b4e3bbde3de4b70f3fb065d7446aabd1c3dbcbc0c5",
+  );
   if (process.platform === "win32") {
+    run(process.execPath, [path.join(frameworkRoot, "scripts", "test-scriptc-windows-msvc-dirent.mjs"), staging]);
+    run(process.execPath, [path.join(frameworkRoot, "scripts", "test-scriptc-windows-msvc-closure.mjs"), staging], {
+      env: { NATIVE_ZIG: process.env.NATIVE_ZIG ?? "zig" },
+    });
     run(process.execPath, [path.join(frameworkRoot, "scripts", "test-scriptc-windows-time.mjs"), staging], {
       env: { NATIVE_ZIG: process.env.NATIVE_ZIG ?? "zig" },
     });

@@ -1,0 +1,628 @@
+diff --git a/packages/core/node_modules/@scriptc/runtime/src/scr_lib.c b/packages/core/node_modules/@scriptc/runtime/src/scr_lib.c
+index a6019c7..0bd6033 100644
+--- a/packages/core/node_modules/@scriptc/runtime/src/scr_lib.c
++++ b/packages/core/node_modules/@scriptc/runtime/src/scr_lib.c
+@@ -17,7 +17,9 @@
+ #include "scr_runtime.h"
+ 
+ #include <ctype.h>
++#if !defined(_WIN32) || !defined(_MSC_VER)
+ #include <dirent.h>
++#endif
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <limits.h>
+@@ -44,7 +46,9 @@
+ #include <direct.h>  /* _mkdir */
+ #include <io.h>      /* _isatty, _access, open/read/write/close */
+ #include <process.h> /* getpid */
++#if !defined(_MSC_VER)
+ #include <unistd.h>  /* mingw-w64 ships one: getcwd, access, isatty, ... */
++#endif
+ #include <winsock2.h> /* BEFORE windows.h (which pulls winsock 1 otherwise) */
+ #include <ws2tcpip.h> /* inet_ntop, sockaddr_in6 */
+ #include <iphlpapi.h> /* GetAdaptersAddresses (os.networkInterfaces) */
+@@ -52,7 +56,87 @@
+ #include <winioctl.h> /* FSCTL_GET_REPARSE_POINT */
+ #include <lmcons.h>  /* UNLEN for GetUserNameA */
+ #include "scr_win_stats.h"
++#if defined(_MSC_VER)
++#include "scr_win_dirent.h"
++#include "scr_win_msvc.h"
++#endif
++
++#if defined(_MSC_VER)
++/* MSVC exposes the same CRT operations under underscored names and has no
++ * dirent.h. Keep this compatibility surface private to the MSVC arm; MinGW
++ * continues to use its POSIX aliases and dirent implementation unchanged. */
++#define access _access
++#define chmod _chmod
++#define close _close
++#define fstat _fstat64
++#define getcwd _getcwd
++#define getpid _getpid
++#define isatty _isatty
++#define mkdir _mkdir
++#define open _open
++#define rmdir _rmdir
++#define stat _stat64
++#define unlink _unlink
++
++typedef _mode_t scr_mode_t;
++
++static ssize_t scr_win_read(int fd, void *data, size_t length) {
++  unsigned int bounded = scr_win_io_count(length);
++  return (ssize_t)_read(fd, data, bounded);
++}
+ 
++static ssize_t scr_win_write(int fd, const void *data, size_t length) {
++  unsigned int bounded = scr_win_io_count(length);
++  return (ssize_t)_write(fd, data, bounded);
++}
++
++#define read scr_win_read
++#define write scr_win_write
++
++#ifndef F_OK
++#define F_OK 0
++#endif
++#ifndef R_OK
++#define R_OK 4
++#endif
++#ifndef W_OK
++#define W_OK 2
++#endif
++#ifndef PATH_MAX
++#define PATH_MAX _MAX_PATH
++#endif
++#ifndef O_RDONLY
++#define O_RDONLY _O_RDONLY
++#define O_WRONLY _O_WRONLY
++#define O_RDWR _O_RDWR
++#define O_APPEND _O_APPEND
++#define O_CREAT _O_CREAT
++#define O_TRUNC _O_TRUNC
++#define O_EXCL _O_EXCL
++#endif
++#ifndef O_BINARY
++#define O_BINARY _O_BINARY
++#endif
++#ifndef S_ISREG
++#define S_ISREG(m) (((m) & _S_IFMT) == _S_IFREG)
++#endif
++#ifndef S_ISDIR
++#define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
++#endif
++#ifndef S_ISFIFO
++#define S_ISFIFO(m) (((m) & _S_IFMT) == _S_IFIFO)
++#endif
++#ifndef S_ISCHR
++#define S_ISCHR(m) (((m) & _S_IFMT) == _S_IFCHR)
++#endif
++#ifndef S_ISBLK
++#define S_ISBLK(m) (false)
++#endif
++#endif
++
++#if !defined(_MSC_VER)
++typedef mode_t scr_mode_t;
++#endif
+ 
+ /* The CRT has no symlink view, so its internal lstat users degrade to stat.
+  * The public Stats path below bypasses this seam and opens the final component
+@@ -96,6 +180,10 @@ extern char **environ; /* env snapshot (scr_env_pairs) */
+ 
+ #endif /* _WIN32 */
+ 
++#if !defined(_WIN32)
++typedef mode_t scr_mode_t;
++#endif
++
+ /* O_BINARY: Windows-only (CRT text mode would translate \n on fd writes);
+  * zero elsewhere so the POSIX open flags are unchanged. */
+ #ifndef O_BINARY
+@@ -1422,17 +1510,17 @@ double scr_process_umask(double mask) {
+   }
+   return (double)prev;
+ #elif defined(__wasi__)
+-  static SCR_TL mode_t current = 022;
+-  mode_t prev = current;
+-  if (mask >= 0) current = (mode_t)mask;
++  static SCR_TL scr_mode_t current = 022;
++  scr_mode_t prev = current;
++  if (mask >= 0) current = (scr_mode_t)mask;
+   return (double)prev;
+ #else
+-  mode_t prev;
++  scr_mode_t prev;
+   if (mask < 0) {
+     prev = umask(0);
+     umask(prev);
+   } else {
+-    prev = umask((mode_t)mask);
++    prev = umask((scr_mode_t)mask);
+   }
+   return (double)prev;
+ #endif
+@@ -1693,7 +1781,7 @@ void scr_fs_write_file_mode(ScrStr *path, ScrStr *data, double mode) {
+   }
+   /* O_BINARY: zero on POSIX; on Windows it keeps the CRT from translating
+    * \n in these byte-exact writes (fopen's "wb" path already does). */
+-  int fd = open(path->data, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, (mode_t)mode);
++  int fd = open(path->data, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, (scr_mode_t)mode);
+   if (fd < 0) {
+     scr_fs_throw(errno, "open", path);
+     return;
+@@ -1731,7 +1819,7 @@ void scr_fs_mkdir(ScrStr *path) {
+  * (umask applies, exactly as in Node — mode is the syscall argument;
+  * Windows has no directory modes and drops it, like Node there). */
+ void scr_fs_mkdir_mode(ScrStr *path, double mode) {
+-  if (scr_sys_mkdir(path->data, (mode_t)mode) != 0) scr_fs_throw(errno, "mkdir", path);
++  if (scr_sys_mkdir(path->data, (scr_mode_t)mode) != 0) scr_fs_throw(errno, "mkdir", path);
+ }
+ 
+ void scr_fs_unlink(ScrStr *path) {
+@@ -1739,7 +1827,7 @@ void scr_fs_unlink(ScrStr *path) {
+ }
+ 
+ void scr_fs_chmod(ScrStr *path, double mode) {
+-  if (chmod(path->data, (mode_t)mode) != 0) scr_fs_throw(errno, "chmod", path);
++  if (chmod(path->data, (scr_mode_t)mode) != 0) scr_fs_throw(errno, "chmod", path);
+ }
+ 
+ void scr_fs_chown(ScrStr *path, double uid, double gid) {
+@@ -2285,6 +2373,9 @@ void scr_fs_copyfile(ScrStr *src, ScrStr *dest) {
+  * Win32 API rather than the active-code-page `A` form. */
+ #ifdef _WIN32
+ static WCHAR *scr_fs_win_wide(const ScrStr *path) {
++#if defined(_MSC_VER)
++  return scr_win_utf8_wide(path->data, path->len);
++#else
+   if (path->len > INT_MAX) {
+     SetLastError(ERROR_FILENAME_EXCED_RANGE);
+     return NULL;
+@@ -2305,6 +2396,7 @@ static WCHAR *scr_fs_win_wide(const ScrStr *path) {
+   }
+   wide[n] = L'\0';
+   return wide;
++#endif
+ }
+ 
+ /* The reachable fs subset of libuv's uv_translate_sys_error table. */
+@@ -2342,8 +2434,9 @@ static int scr_fs_win_errno(DWORD error) {
+     return EROFS;
+   case ERROR_NOT_SAME_DEVICE:
+     return EXDEV;
+-  case ERROR_BAD_PATHNAME:
+   case ERROR_DIRECTORY:
++    return ENOTDIR;
++  case ERROR_BAD_PATHNAME:
+   case ERROR_FILE_NOT_FOUND:
+   case ERROR_INVALID_DRIVE:
+   case ERROR_INVALID_NAME:
+@@ -2389,6 +2482,17 @@ void scr_fs_rm(ScrStr *path) {
+    * refuse directories (Node requires `recursive`, which the scriptc
+    * surface doesn't declare — the message wording diverges from Node's
+    * ERR_FS_EISDIR, see SEMANTICS.md), then unlink. */
++#if defined(_WIN32) && defined(_MSC_VER)
++  bool removed = false;
++  const char *operation = "lstat";
++  int reparse_error = scr_win_remove_reparse(path->data, path->len,
++                                              &removed, &operation);
++  if (reparse_error != 0) {
++    scr_fs_throw(reparse_error, operation, path);
++    return;
++  }
++  if (removed) return;
++#endif
+   struct stat st;
+   if (lstat(path->data, &st) != 0) {
+     scr_fs_throw(errno, "lstat", path);
+@@ -2426,7 +2530,7 @@ static bool scr_fs_sep(char c) {
+   return c == '/';
+ }
+ 
+-static void scr_mkdir_rec(char *path, size_t len, mode_t mode) {
++static void scr_mkdir_rec(char *path, size_t len, scr_mode_t mode) {
+   if (scr_sys_mkdir(path, mode) == 0) return;
+   int e = errno;
+   struct stat st;
+@@ -2486,7 +2590,7 @@ void scr_fs_mkdir_recursive_mode(ScrStr *path, double mode) {
+     scr_trap("scriptc: out of memory\n");
+   }
+   memcpy(buf, path->data, path->len + 1);
+-  scr_mkdir_rec(buf, path->len, (mode_t)mode);
++  scr_mkdir_rec(buf, path->len, (scr_mode_t)mode);
+   free(buf);
+ }
+ 
+@@ -2507,9 +2611,30 @@ static void scr_rm_fail_set(ScrRmFail *f, int err, const char *op, const char *p
+   f->path = scr_str_new(path, len);
+ }
+ 
++static const struct dirent *scr_fs_readdir_next(DIR *dir, int *error) {
++#if defined(_WIN32) && defined(_MSC_VER)
++  return scr_win_readdir_next(dir, error);
++#else
++  errno = 0;
++  const struct dirent *entry = readdir(dir);
++  *error = entry ? 0 : errno;
++  return entry;
++#endif
++}
++
+ /* Post-order tree removal for rmSync's recursive form. Stops at (and
+  * records) the first failure, with the failing path and syscall name. */
+ static void scr_rm_tree_e(const char *path, size_t len, ScrRmFail *f) {
++#if defined(_WIN32) && defined(_MSC_VER)
++  bool removed = false;
++  const char *operation = "lstat";
++  int reparse_error = scr_win_remove_reparse(path, len, &removed, &operation);
++  if (reparse_error != 0) {
++    scr_rm_fail_set(f, reparse_error, operation, path, len);
++    return;
++  }
++  if (removed) return;
++#endif
+   struct stat st;
+   if (lstat(path, &st) != 0) {
+     scr_rm_fail_set(f, errno, "lstat", path, len);
+@@ -2525,7 +2650,8 @@ static void scr_rm_tree_e(const char *path, size_t len, ScrRmFail *f) {
+     return;
+   }
+   const struct dirent *ent;
+-  while ((ent = readdir(d)) != NULL) {
++  int read_error = 0;
++  while ((ent = scr_fs_readdir_next(d, &read_error)) != NULL) {
+     if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+     size_t namelen = strlen(ent->d_name);
+     char *child = malloc(len + 1 + namelen + 1);
+@@ -2542,6 +2668,11 @@ static void scr_rm_tree_e(const char *path, size_t len, ScrRmFail *f) {
+       return;
+     }
+   }
++  if (read_error != 0) {
++    closedir(d);
++    scr_rm_fail_set(f, read_error, "scandir", path, len);
++    return;
++  }
+   closedir(d);
+   if (rmdir(path) != 0) scr_rm_fail_set(f, errno, "rmdir", path, len);
+ }
+@@ -2550,6 +2681,18 @@ static void scr_rm_tree_e(const char *path, size_t len, ScrRmFail *f) {
+  * force's ENOENT swallow, the non-recursive directory rejection, and the
+  * tree walk — failures recorded in `f`, never thrown. */
+ static void scr_fs_rm_attempt(ScrStr *path, bool recursive, bool force, ScrRmFail *f) {
++#if defined(_WIN32) && defined(_MSC_VER)
++  bool removed = false;
++  const char *operation = "lstat";
++  int reparse_error = scr_win_remove_reparse(path->data, path->len,
++                                              &removed, &operation);
++  if (reparse_error != 0) {
++    if (force && reparse_error == ENOENT) return;
++    scr_rm_fail_set(f, reparse_error, operation, path->data, path->len);
++    return;
++  }
++  if (removed) return;
++#endif
+   struct stat st;
+   if (lstat(path->data, &st) != 0) {
+     if (force && errno == ENOENT) return; /* Node: force swallows ENOENT */
+@@ -3215,11 +3358,17 @@ ScrArr *scr_fs_readdir(ScrStr *path) {
+   }
+   ScrArr *arr = scr_arr_new(SCR_ELEM_STR, 8);
+   const struct dirent *ent;
+-  while ((ent = readdir(d)) != NULL) {
++  int read_error = 0;
++  while ((ent = scr_fs_readdir_next(d, &read_error)) != NULL) {
+     if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+     scr_arr_push_ref(arr, scr_str_new(ent->d_name, strlen(ent->d_name)));
+   }
+   closedir(d);
++  if (read_error != 0) {
++    scr_arr_release(arr);
++    scr_fs_throw(read_error, "scandir", path);
++    return NULL;
++  }
+   return arr; /* OS order, exactly like Node (unsorted) */
+ }
+ 
+@@ -3237,7 +3386,7 @@ struct ScrScandir {
+   unsigned char *kinds;
+ };
+ 
+-static unsigned char scr_dirent_kind_of_mode(mode_t m) {
++static unsigned char scr_dirent_kind_of_mode(scr_mode_t m) {
+   if (S_ISREG(m)) return 1;
+   if (S_ISDIR(m)) return 2;
+ #ifdef S_ISLNK /* no symlink/socket bits in the CRT's stat */
+@@ -3270,7 +3419,8 @@ ScrScandir *scr_fs_scandir(ScrStr *path) {
+     scr_trap("scriptc: out of memory\n");
+   }
+   const struct dirent *ent;
+-  while ((ent = readdir(d)) != NULL) {
++  int read_error = 0;
++  while ((ent = scr_fs_readdir_next(d, &read_error)) != NULL) {
+     if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+     unsigned char kind;
+ #ifdef DT_REG
+@@ -3316,6 +3466,11 @@ ScrScandir *scr_fs_scandir(ScrStr *path) {
+     s->len++;
+   }
+   closedir(d);
++  if (read_error != 0) {
++    scr_fs_scandir_free(s);
++    scr_fs_throw(read_error, "scandir", path);
++    return NULL;
++  }
+   return s;
+ }
+ 
+diff --git a/packages/core/node_modules/@scriptc/runtime/src/scr_win_dirent.h b/packages/core/node_modules/@scriptc/runtime/src/scr_win_dirent.h
+new file mode 100644
+index 0000000..84b2847
+--- /dev/null
++++ b/packages/core/node_modules/@scriptc/runtime/src/scr_win_dirent.h
+@@ -0,0 +1,241 @@
++#ifndef SCR_WIN_DIRENT_H
++#define SCR_WIN_DIRENT_H
++
++#if !defined(_WIN32) || !defined(_MSC_VER)
++#error "scr_win_dirent.h is only for the MSVC Windows runtime arm"
++#endif
++
++#include <errno.h>
++#include <limits.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <wchar.h>
++#include <windows.h>
++
++/* MSVC has no dirent.h. ScriptC paths are UTF-8, so enumerate through the
++ * wide Win32 API and convert names back to UTF-8 without the ANSI code page. */
++#define DT_UNKNOWN 0
++#define DT_FIFO 1
++#define DT_CHR 2
++#define DT_DIR 4
++#define DT_BLK 6
++#define DT_REG 8
++#define DT_LNK 10
++#define DT_SOCK 12
++
++struct dirent {
++  char d_name[MAX_PATH * 4];
++  unsigned char d_type;
++};
++
++typedef struct {
++  HANDLE handle;
++  WIN32_FIND_DATAW data;
++  bool first;
++  struct dirent entry;
++} DIR;
++
++static int scr_win_dirent_errno(DWORD error) {
++  switch (error) {
++  case ERROR_ACCESS_DENIED:
++  case ERROR_PRIVILEGE_NOT_HELD:
++    return EACCES;
++  case ERROR_BUFFER_OVERFLOW:
++  case ERROR_FILENAME_EXCED_RANGE:
++  case ERROR_INSUFFICIENT_BUFFER:
++    return ENAMETOOLONG;
++  case ERROR_NOT_ENOUGH_MEMORY:
++  case ERROR_OUTOFMEMORY:
++    return ENOMEM;
++  case ERROR_INVALID_HANDLE:
++    return EBADF;
++  case ERROR_DIRECTORY:
++    return ENOTDIR;
++  case ERROR_BAD_PATHNAME:
++  case ERROR_FILE_NOT_FOUND:
++  case ERROR_INVALID_DRIVE:
++  case ERROR_INVALID_NAME:
++  case ERROR_PATH_NOT_FOUND:
++    return ENOENT;
++  default:
++    return EIO;
++  }
++}
++
++static WCHAR *scr_win_utf8_wide(const char *path, size_t path_len) {
++  if (path_len > INT_MAX) {
++    SetLastError(ERROR_FILENAME_EXCED_RANGE);
++    return NULL;
++  }
++  int wide_len = path_len > 0
++    ? MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
++                          path, (int)path_len, NULL, 0)
++    : 0;
++  if (path_len > 0 && wide_len <= 0) return NULL;
++  WCHAR *wide = malloc(((size_t)wide_len + 1) * sizeof *wide);
++  if (!wide) {
++    SetLastError(ERROR_NOT_ENOUGH_MEMORY);
++    return NULL;
++  }
++  if (wide_len > 0) {
++    int converted = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
++                                        path, (int)path_len, wide, wide_len);
++    if (converted != wide_len) {
++      DWORD error = GetLastError();
++      free(wide);
++      SetLastError(error);
++      return NULL;
++    }
++  }
++  wide[wide_len] = L'\0';
++  return wide;
++}
++
++static DIR *scr_win_opendir(const char *path) {
++  size_t path_len = strlen(path);
++  if (path_len == 0) {
++    errno = ENOENT;
++    return NULL;
++  }
++  WCHAR *wide = scr_win_utf8_wide(path, path_len);
++  if (!wide) {
++    errno = scr_win_dirent_errno(GetLastError());
++    return NULL;
++  }
++  DWORD attributes = GetFileAttributesW(wide);
++  if (attributes == INVALID_FILE_ATTRIBUTES ||
++      (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
++    DWORD error = attributes == INVALID_FILE_ATTRIBUTES
++      ? GetLastError()
++      : ERROR_DIRECTORY;
++    free(wide);
++    errno = scr_win_dirent_errno(error);
++    return NULL;
++  }
++  size_t wide_len = wcslen(wide);
++  const size_t extra = 3; /* optional separator, wildcard, NUL */
++  if (wide_len > (SIZE_MAX / sizeof(WCHAR)) - extra) {
++    free(wide);
++    errno = ENAMETOOLONG;
++    return NULL;
++  }
++  WCHAR *pattern = malloc((wide_len + extra) * sizeof *pattern);
++  if (!pattern) {
++    free(wide);
++    errno = ENOMEM;
++    return NULL;
++  }
++  memcpy(pattern, wide, wide_len * sizeof *pattern);
++  free(wide);
++  size_t at = wide_len;
++  if (pattern[at - 1] != L'\\' && pattern[at - 1] != L'/') pattern[at++] = L'\\';
++  pattern[at++] = L'*';
++  pattern[at] = L'\0';
++
++  DIR *dir = malloc(sizeof *dir);
++  if (!dir) {
++    free(pattern);
++    errno = ENOMEM;
++    return NULL;
++  }
++  dir->handle = FindFirstFileW(pattern, &dir->data);
++  DWORD error = dir->handle == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
++  free(pattern);
++  if (dir->handle == INVALID_HANDLE_VALUE) {
++    free(dir);
++    errno = scr_win_dirent_errno(error);
++    return NULL;
++  }
++  dir->first = true;
++  return dir;
++}
++
++static int scr_win_remove_reparse(const char *path, size_t path_len,
++                                  bool *removed, const char **operation) {
++  *removed = false;
++  *operation = "lstat";
++  WCHAR *wide = scr_win_utf8_wide(path, path_len);
++  if (!wide) return scr_win_dirent_errno(GetLastError());
++  DWORD attributes = GetFileAttributesW(wide);
++  if (attributes == INVALID_FILE_ATTRIBUTES) {
++    DWORD error = GetLastError();
++    free(wide);
++    return scr_win_dirent_errno(error);
++  }
++  if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
++    free(wide);
++    return 0;
++  }
++  bool directory = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
++  *operation = directory ? "rmdir" : "unlink";
++  BOOL ok = directory ? RemoveDirectoryW(wide) : DeleteFileW(wide);
++  DWORD error = ok ? ERROR_SUCCESS : GetLastError();
++  free(wide);
++  if (!ok) return scr_win_dirent_errno(error);
++  *removed = true;
++  return 0;
++}
++
++static struct dirent *scr_win_readdir(DIR *dir) {
++  if (!dir || dir->handle == INVALID_HANDLE_VALUE) {
++    errno = EBADF;
++    return NULL;
++  }
++  if (dir->first) {
++    dir->first = false;
++  } else if (!FindNextFileW(dir->handle, &dir->data)) {
++    DWORD error = GetLastError();
++    if (error != ERROR_NO_MORE_FILES) errno = scr_win_dirent_errno(error);
++    return NULL;
++  }
++  int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
++                                  dir->data.cFileName, -1,
++                                  dir->entry.d_name,
++                                  (int)sizeof dir->entry.d_name,
++                                  NULL, NULL);
++  if (bytes <= 0) {
++    errno = scr_win_dirent_errno(GetLastError());
++    return NULL;
++  }
++  DWORD attributes = dir->data.dwFileAttributes;
++  if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
++    dir->entry.d_type = dir->data.dwReserved0 == IO_REPARSE_TAG_SYMLINK ||
++                        dir->data.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT
++      ? DT_LNK
++      : DT_UNKNOWN;
++  } else if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
++    dir->entry.d_type = DT_DIR;
++  } else if ((attributes & FILE_ATTRIBUTE_DEVICE) != 0) {
++    dir->entry.d_type = DT_CHR;
++  } else {
++    dir->entry.d_type = DT_REG;
++  }
++  return &dir->entry;
++}
++
++static struct dirent *scr_win_readdir_next(DIR *dir, int *error) {
++  errno = 0;
++  struct dirent *entry = scr_win_readdir(dir);
++  *error = entry ? 0 : errno;
++  return entry;
++}
++
++static int scr_win_closedir(DIR *dir) {
++  if (!dir) {
++    errno = EBADF;
++    return -1;
++  }
++  BOOL ok = dir->handle != INVALID_HANDLE_VALUE && FindClose(dir->handle);
++  DWORD error = ok ? ERROR_SUCCESS : GetLastError();
++  free(dir);
++  if (!ok) errno = scr_win_dirent_errno(error);
++  return ok ? 0 : -1;
++}
++
++#define opendir scr_win_opendir
++#define readdir scr_win_readdir
++#define closedir scr_win_closedir
++
++#endif
+diff --git a/packages/core/node_modules/@scriptc/runtime/src/scr_win_msvc.h b/packages/core/node_modules/@scriptc/runtime/src/scr_win_msvc.h
+new file mode 100644
+index 0000000..716f17c
+--- /dev/null
++++ b/packages/core/node_modules/@scriptc/runtime/src/scr_win_msvc.h
+@@ -0,0 +1,15 @@
++#ifndef SCR_WIN_MSVC_H
++#define SCR_WIN_MSVC_H
++
++#if !defined(_WIN32) || !defined(_MSC_VER)
++#error "scr_win_msvc.h is only for the MSVC Windows runtime arm"
++#endif
++
++#include <limits.h>
++#include <stddef.h>
++
++static unsigned int scr_win_io_count(size_t length) {
++  return length > (size_t)INT_MAX ? (unsigned int)INT_MAX : (unsigned int)length;
++}
++
++#endif
