@@ -1,0 +1,101 @@
+name: Build Volt Native
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-volt-native-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_REPOSITORY: https://cnb.cool/aizhuliren/volt-native
+  SOURCE_REF: main
+
+jobs:
+  macos:
+    name: macOS arm64
+    runs-on: macos-15
+    steps:
+      - name: Checkout CI repository
+        uses: actions/checkout@v4
+
+      - name: Checkout source main
+        shell: bash
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CNB_TOKEN"
+          git -c "http.extraHeader=Authorization: Bearer $CNB_TOKEN" clone \
+            --branch "$SOURCE_REF" \
+            --depth 1 \
+            "$SOURCE_REPOSITORY" \
+            source
+          git -C source rev-parse HEAD
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install bun zig
+          cd source/native-ui
+          bun install --frozen-lockfile
+
+      - name: Build macOS binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd source
+          VOLT_NATIVE_SDK_ALLOW_INVENTORY_PUBLISH=1 \
+            ./scripts/native-patched.sh build native-ui --yes -Doptimize=ReleaseFast
+          file native-ui/zig-out/bin/volt-native-poc
+
+      - name: Upload macOS binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: volt-native-macos-arm64
+          path: source/native-ui/zig-out/bin/volt-native-poc
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Windows x64
+    runs-on: windows-2025
+    steps:
+      - name: Checkout CI repository
+        uses: actions/checkout@v4
+
+      - name: Checkout source main
+        shell: pwsh
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CNB_TOKEN)) {
+            throw "CNB_TOKEN is required"
+          }
+          git -c "http.extraHeader=Authorization: Bearer $env:CNB_TOKEN" clone `
+            --branch $env:SOURCE_REF `
+            --depth 1 `
+            $env:SOURCE_REPOSITORY `
+            source
+          git -C source rev-parse HEAD
+
+      - name: Verify Windows product support
+        shell: pwsh
+        run: |
+          $app = Get-Content source/native-ui/app.zon -Raw
+          $build = Get-Content source/native-ui/build.zig -Raw
+          if ($app -notmatch '"windows"' -or $build -match 'supports only macOS') {
+            throw "The source main branch does not yet support a complete Windows GUI build. Windows bootstrap, agentd authority, Codex runtime, and packaging must be ported before this job can produce an honest binary."
+          }
+
+      - name: Build Windows GUI
+        shell: pwsh
+        run: |
+          throw "Windows GUI build command is intentionally unavailable until the source main branch provides a verified Windows product build entrypoint."
