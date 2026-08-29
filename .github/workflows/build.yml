@@ -85,6 +85,7 @@ jobs:
           set -euo pipefail
           test "$(bun --version)" = "$BUN_VERSION"
           test "$(zig version)" = "$ZIG_VERSION"
+          command -v rg >/dev/null || HOMEBREW_NO_REQUIRE_TAP_TRUST=1 brew install ripgrep
           cd "$SOURCE_DIR/native-ui"
           bun install --frozen-lockfile
 
@@ -100,6 +101,7 @@ jobs:
         run: |
           set -euo pipefail
           NATIVE_ZIG="$(command -v zig)" \
+            ZIG_BIN="$(command -v zig)" \
             VOLT_SOURCE_ROOT="$SOURCE_DIR" \
             VOLT_NATIVE_SDK_ALLOW_INVENTORY_PUBLISH=1 \
             "$SOURCE_DIR/scripts/prepare-native-sdk.sh" --print-path
