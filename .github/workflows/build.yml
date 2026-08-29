@@ -53,7 +53,9 @@ jobs:
           alignment="$GITHUB_WORKSPACE/patches/volt-native-sdk-0.9.5-alignment.patch"
           if git -C "$SOURCE_DIR" apply --check "$alignment"; then
             git -C "$SOURCE_DIR" apply "$alignment"
-          elif git -C "$SOURCE_DIR" apply --reverse --check "$alignment"; then
+          elif test -f "$SOURCE_DIR/docs/native-sdk-0.9.5-upgrade-contract.md" \
+            && grep -F 'Volt-owned Native SDK v0.9.5' "$SOURCE_DIR/native-ui/build.zig" >/dev/null \
+            && grep -F 'prepare-native-sdk-v095.sh' "$SOURCE_DIR/scripts/prepare-native-sdk.sh" >/dev/null; then
             echo "SDK alignment patch is already integrated in source"
           else
             echo "SDK alignment patch is neither applicable nor already integrated" >&2
@@ -169,6 +171,14 @@ jobs:
             git -C $env:SOURCE_DIR apply --reverse --check $patch 2>$null
             if ($LASTEXITCODE -eq 0) {
               Write-Host "Patch is already integrated in source: $patch"
+              continue
+            }
+
+            if ($patch -eq $alignment -and
+                (Test-Path (Join-Path $env:SOURCE_DIR "docs/native-sdk-0.9.5-upgrade-contract.md")) -and
+                (Select-String -Path (Join-Path $env:SOURCE_DIR "native-ui/build.zig") -Pattern "Volt-owned Native SDK v0.9.5" -Quiet) -and
+                (Select-String -Path (Join-Path $env:SOURCE_DIR "scripts/prepare-native-sdk.sh") -Pattern "prepare-native-sdk-v095.sh" -Quiet)) {
+              Write-Host "SDK alignment patch is already integrated in source: $patch"
               continue
             }
 
