@@ -50,8 +50,15 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$SOURCE_EXPECTED_COMMIT"
-          git -C "$SOURCE_DIR" apply --check "$GITHUB_WORKSPACE/patches/volt-native-sdk-0.9.5-alignment.patch"
-          git -C "$SOURCE_DIR" apply "$GITHUB_WORKSPACE/patches/volt-native-sdk-0.9.5-alignment.patch"
+          alignment="$GITHUB_WORKSPACE/patches/volt-native-sdk-0.9.5-alignment.patch"
+          if git -C "$SOURCE_DIR" apply --check "$alignment"; then
+            git -C "$SOURCE_DIR" apply "$alignment"
+          elif git -C "$SOURCE_DIR" apply --reverse --check "$alignment"; then
+            echo "SDK alignment patch is already integrated in source"
+          else
+            echo "SDK alignment patch is neither applicable nor already integrated" >&2
+            exit 1
+          fi
           rm -rf "$SOURCE_DIR/.git"
 
       - name: Set up Node.js 24
@@ -148,13 +155,25 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
+          $PSNativeCommandUseErrorActionPreference = $false
           $alignment = Join-Path $env:GITHUB_WORKSPACE "patches/volt-native-sdk-0.9.5-alignment.patch"
           $windows = Join-Path $env:GITHUB_WORKSPACE "patches/volt-native-windows-compile-baseline.patch"
-          git -C $env:SOURCE_DIR apply --check $alignment
-          git -C $env:SOURCE_DIR apply $alignment
-          git -C $env:SOURCE_DIR apply --check $windows
-          git -C $env:SOURCE_DIR apply $windows
+          foreach ($patch in @($alignment, $windows)) {
+            git -C $env:SOURCE_DIR apply --check $patch 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              git -C $env:SOURCE_DIR apply $patch
+              if ($LASTEXITCODE -ne 0) { throw "Failed to apply $patch" }
+              continue
+            }
+
+            git -C $env:SOURCE_DIR apply --reverse --check $patch 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Patch is already integrated in source: $patch"
+              continue
+            }
+
+            throw "Patch is neither applicable nor already integrated: $patch"
+          }
           Remove-Item -Recurse -Force "$env:SOURCE_DIR/.git"
 
       - name: Set up Node.js 24
