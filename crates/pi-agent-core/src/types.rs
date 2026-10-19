@@ -102,7 +102,7 @@ impl Default for ModelConfig {
     fn default() -> Self {
         Self {
             provider: "openai-compatible".into(),
-            model: "deepseek-coder".into(),
+            model: "gpt-4o".into(),
             api_base: Some("https://api.openai.com/v1".into()),
             api_key: None,
             temperature: 0.2,

@@ -1,15 +1,15 @@
-# Pi Desktop (Native AI Coding Agent)
+# Volt Desktop (Native AI Coding Agent)
 
-A blazing-fast, lightweight native desktop AI coding assistant built entirely in **Rust** using **GPUI Kit** and the **Pi Agent** autonomous runtime.
+A blazing-fast, lightweight native desktop AI coding assistant built with **Volt** native high-performance runtime.
 
 ---
 
 ## ⚡ Tech Stack Architecture
 
-* **Desktop UI & Rendering**: [GPUI Kit](https://github.com/longbridge/gpui-kit) (Built upon Zed's 120 FPS GPU rendering engine GPUI, featuring 75+ production-grade native components).
-* **Agent Core**: **Pi Rust Runtime** (`pi-agent-core`), inspired by the Pi agent architecture:
+* **Desktop UI & Rendering**: Native GPU rendering engine (120 FPS hardware acceleration).
+* **Agent Core**: **Volt Autonomous Runtime** (`pi-agent-core`):
   * Full autonomous tool execution loop (`read_file`, `write_file`, `edit_file`, `bash`, `grep`, `find`).
-  * Streaming model provider interface (OpenAI-compatible endpoints, DeepSeek, Ollama, Claude, etc.).
+  * Streaming model provider interface (OpenAI-compatible endpoints, Anthropic, Ollama, etc.).
   * Session history management and serialization.
 * **Pure Rust**: Zero Electron, zero Node/V8 runtime overhead, sub-millisecond cold starts, and minimal memory consumption.
 * **No External Codex CLI**: Standalone native agent runtime without dependencies on npm or proprietary wrappers.
@@ -22,7 +22,7 @@ A blazing-fast, lightweight native desktop AI coding assistant built entirely in
 .
 ├── Cargo.toml                  # Cargo workspace definition
 ├── crates/
-│   ├── pi-agent-core/          # Core Pi agent runtime & tools (headless)
+│   ├── pi-agent-core/          # Core agent runtime & tools (headless)
 │   │   ├── src/
 │   │   │   ├── agent.rs        # Autonomous agent turn loop & event streaming
 │   │   │   ├── provider.rs     # Streaming LLM client
@@ -30,7 +30,7 @@ A blazing-fast, lightweight native desktop AI coding assistant built entirely in
 │   │   │   ├── tools/          # Native tools: bash, fs (read/write/edit), search (find/grep)
 │   │   │   └── types.rs        # Message, ToolCall, AgentEvent, ModelConfig
 │   │   └── tests/              # End-to-end tool integration tests
-│   └── pi-desktop/             # GPUI Kit desktop GUI application
+│   └── pi-desktop/             # Volt desktop GUI application
 │       └── src/
 │           └── main.rs         # Native desktop window, chat interface & event dispatch
 └── .github/workflows/
