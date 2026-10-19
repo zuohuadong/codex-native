@@ -1,135 +1,94 @@
-name: Build Volt Native
+name: Build Pi Rust Native
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
+      - pi-rust
+  pull_request:
+    branches:
+      - main
+      - pi-rust
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-volt-native-${{ github.ref }}
+  group: build-pi-rust-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  SOURCE_REPOSITORY: https://cnb.cool/aizhuliren/volt-native
-  SOURCE_REF: main
-  NODE_VERSION: "24"
+  CARGO_TERM_COLOR: always
 
 jobs:
-  macos:
-    name: macOS arm64
+  test:
+    name: Test & Lint (macOS)
     runs-on: macos-15
     steps:
-      - name: Checkout CI repository
-        uses: actions/checkout@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Checkout source main
-        shell: bash
-        env:
-          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "$CNB_TOKEN"
-          SOURCE_DIR="$RUNNER_TEMP/volt-native-source"
-          echo "SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
-          git -c "http.extraHeader=Authorization: Bearer $CNB_TOKEN" clone \
-            --branch "$SOURCE_REF" \
-            --depth 1 \
-            "$SOURCE_REPOSITORY" \
-            "$SOURCE_DIR"
-          git -C "$SOURCE_DIR" rev-parse HEAD
-          rm -rf "$SOURCE_DIR/.git"
-
-      - name: Set up Node.js 24
-        uses: actions/setup-node@v7
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          package-manager-cache: false
+          components: clippy, rustfmt
 
-      - name: Install build dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          brew untap aws/tap 2>/dev/null || true
-          brew install bun zig
-          cd "$SOURCE_DIR/native-ui"
-          bun install --frozen-lockfile
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
 
-      - name: Prefetch Rust dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$SOURCE_DIR"
-          cargo fetch --locked --target aarch64-apple-darwin
+      - name: Run Cargo Check
+        run: cargo check --workspace --all-targets
 
-      - name: Prepare patched Native SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          VOLT_SOURCE_ROOT="$SOURCE_DIR" \
-            VOLT_NATIVE_SDK_ALLOW_INVENTORY_PUBLISH=1 \
-            ./scripts/prepare-native-sdk.sh --print-path
-          sed -i '' \
-            's|../.artifacts/native-sdk/0.9.1-patched|../.artifacts/native-sdk/0.9.5-patched|' \
-            "$SOURCE_DIR/native-ui/build.zig.zon"
-          grep -F '../.artifacts/native-sdk/0.9.5-patched' \
-            "$SOURCE_DIR/native-ui/build.zig.zon"
+      - name: Run Cargo Test
+        run: cargo test --workspace
 
-      - name: Build macOS binary
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$SOURCE_DIR/native-ui"
-          VOLT_NATIVE_SDK_REQUIRE_REUSE=1 \
-            ../scripts/native-patched.sh build . --yes -Doptimize=ReleaseFast
-          file zig-out/bin/volt-native-poc
+  build-macos:
+    name: Build macOS Binary (arm64)
+    needs: test
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Upload macOS binary
-        uses: actions/upload-artifact@v7
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Desktop Release
+        run: cargo build --release -p pi-desktop
+
+      - name: Upload macOS Binary
+        uses: actions/upload-artifact@v4
         with:
-          name: volt-native-macos-arm64
-          path: ${{ runner.temp }}/volt-native-source/native-ui/zig-out/bin/volt-native-poc
+          name: pi-desktop-macos-arm64
+          path: target/release/pi-desktop
           if-no-files-found: error
           retention-days: 14
 
-  windows:
-    name: Windows x64
-    if: ${{ vars.ENABLE_WINDOWS_GUI_BUILD == 'true' }}
-    runs-on: windows-2025
+  build-windows:
+    name: Build Windows Binary (x64)
+    needs: test
+    runs-on: windows-latest
     steps:
-      - name: Checkout CI repository
-        uses: actions/checkout@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Checkout source main
-        shell: pwsh
-        env:
-          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:CNB_TOKEN)) {
-            throw "CNB_TOKEN is required"
-          }
-          $sourceDir = Join-Path $env:RUNNER_TEMP "volt-native-source"
-          "SOURCE_DIR=$sourceDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          git -c "http.extraHeader=Authorization: Bearer $env:CNB_TOKEN" clone `
-            --branch $env:SOURCE_REF `
-            --depth 1 `
-            $env:SOURCE_REPOSITORY `
-            $sourceDir
-          git -C $sourceDir rev-parse HEAD
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Verify Windows product support
-        shell: pwsh
-        run: |
-          $app = Get-Content "$env:SOURCE_DIR/native-ui/app.zon" -Raw
-          $build = Get-Content "$env:SOURCE_DIR/native-ui/build.zig" -Raw
-          if ($app -notmatch '"windows"' -or $build -match 'supports only macOS') {
-            throw "The source main branch does not yet support a complete Windows GUI build. Windows bootstrap, agentd authority, Codex runtime, and packaging must be ported before this job can produce an honest binary."
-          }
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
 
-      - name: Build Windows GUI
-        shell: pwsh
-        run: |
-          throw "Windows GUI build command is intentionally unavailable until the source main branch provides a verified Windows product build entrypoint."
+      - name: Build Desktop Release
+        run: cargo build --release -p pi-desktop
+
+      - name: Upload Windows Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-desktop-windows-x64
+          path: target/release/pi-desktop.exe
+          if-no-files-found: error
+          retention-days: 14
