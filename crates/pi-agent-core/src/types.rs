@@ -29,6 +29,8 @@ pub struct Message {
     pub id: String,
     pub role: Role,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reasoning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,6 +44,7 @@ impl Message {
             id: uuid_simple(),
             role: Role::System,
             content: content.into(),
+            reasoning: None,
             tool_calls: None,
             tool_result: None,
             timestamp: now_ms(),
@@ -53,6 +56,7 @@ impl Message {
             id: uuid_simple(),
             role: Role::User,
             content: content.into(),
+            reasoning: None,
             tool_calls: None,
             tool_result: None,
             timestamp: now_ms(),
@@ -64,18 +68,25 @@ impl Message {
             id: uuid_simple(),
             role: Role::Assistant,
             content: content.into(),
+            reasoning: None,
             tool_calls: None,
             tool_result: None,
             timestamp: now_ms(),
         }
     }
 
-    pub fn tool_result(tool_call_id: impl Into<String>, name: impl Into<String>, output: impl Into<String>, is_error: bool) -> Self {
+    pub fn tool_result(
+        tool_call_id: impl Into<String>,
+        name: impl Into<String>,
+        output: impl Into<String>,
+        is_error: bool,
+    ) -> Self {
         let output_str = output.into();
         Self {
             id: uuid_simple(),
             role: Role::Tool,
             content: output_str.clone(),
+            reasoning: None,
             tool_calls: None,
             tool_result: Some(ToolResult {
                 tool_call_id: tool_call_id.into(),
@@ -100,24 +111,39 @@ pub struct ModelConfig {
 
 impl Default for ModelConfig {
     fn default() -> Self {
+        let api_key = std::env::var("SENSENOVA_API_KEY")
+            .or_else(|_| std::env::var("OPENAI_API_KEY"))
+            .ok();
         Self {
             provider: "openai-compatible".into(),
-            model: "gpt-4o".into(),
-            api_base: Some("https://api.openai.com/v1".into()),
-            api_key: None,
+            model: "sensenova-6.8-flash-lite".into(),
+            api_base: Some("https://token.sensenova.cn/v1".into()),
+            api_key,
             temperature: 0.2,
-            max_tokens: Some(4096),
+            max_tokens: Some(8192),
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentEvent {
+    WorkflowUpdated(crate::workflow::WorkflowSnapshot),
     Thought(String),
     TextDelta(String),
-    ToolCallStarted { id: String, name: String, arguments: serde_json::Value },
-    ToolCallFinished { id: String, name: String, output: String, is_error: bool },
-    Completed { total_tokens: Option<u64> },
+    ToolCallStarted {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+    ToolCallFinished {
+        id: String,
+        name: String,
+        output: String,
+        is_error: bool,
+    },
+    Completed {
+        total_tokens: Option<u64>,
+    },
     Error(String),
 }
 
@@ -130,6 +156,9 @@ fn now_ms() -> i64 {
 
 fn uuid_simple() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     format!("msg-{:x}", now)
 }

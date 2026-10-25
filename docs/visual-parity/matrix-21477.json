@@ -1,0 +1,1754 @@
+{
+  "status": "PARTIAL",
+  "reference": {
+    "bundle_id": "com.openai.codex",
+    "version": "26.1016.62342",
+    "build": "21477",
+    "asar_sha256": "5b5cf52887cfd4de19cb5862155a8ef6cf58830c0a2fc592b72060cfcc3be869"
+  },
+  "rows": [
+    {
+      "state": "chat-empty",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-empty",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-empty",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-empty",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-empty",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-empty",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-empty",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-empty",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-empty",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-empty",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-empty",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-empty",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-streaming",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-streaming",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-streaming",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-streaming",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-streaming",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-streaming",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-streaming",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-streaming",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-streaming",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-streaming",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-streaming",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "chat-streaming",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-running",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-running",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-running",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-running",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-running",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-running",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-running",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-running",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-running",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-running",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-running",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-running",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-failed",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-failed",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-failed",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-failed",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-failed",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-failed",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-failed",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-failed",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-failed",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-failed",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-failed",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "tool-failed",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "provider-error",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "provider-error",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "provider-error",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "provider-error",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "provider-error",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "provider-error",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "provider-error",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "provider-error",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "provider-error",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "provider-error",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "provider-error",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "provider-error",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "queue-paused",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "queue-paused",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "queue-paused",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "queue-paused",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "queue-paused",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "queue-paused",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "queue-paused",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "queue-paused",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "queue-paused",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "queue-paused",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "queue-paused",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "queue-paused",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [
+        "docs/visual-parity/runs/21477/settings-light-zh-cn-wide/capture.json"
+      ],
+      "candidate": [
+        "docs/visual-parity/runs/21477/volt-settings-wide-active/capture.json"
+      ],
+      "status": "CAPTURED_BOTH_REQUIRES_COMPARISON"
+    },
+    {
+      "state": "settings",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [
+        "docs/visual-parity/runs/21477/settings-light-zh-cn-request600/capture.json"
+      ],
+      "candidate": [],
+      "status": "REFERENCE_ONLY"
+    },
+    {
+      "state": "settings",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [
+        "docs/visual-parity/runs/21477/settings-light-zh-cn-request480/capture.json"
+      ],
+      "candidate": [],
+      "status": "REFERENCE_ONLY"
+    },
+    {
+      "state": "settings",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings-validation-error",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings-validation-error",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings-validation-error",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings-validation-error",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings-validation-error",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings-validation-error",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings-validation-error",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings-validation-error",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings-validation-error",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings-validation-error",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings-validation-error",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "settings-validation-error",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "skills",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "skills",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "skills",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "skills",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "skills",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "skills",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "skills",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "skills",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "skills",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "skills",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "skills",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "skills",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "automation-edit",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "automation-edit",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "automation-edit",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "automation-edit",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "automation-edit",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "automation-edit",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "automation-edit",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "automation-edit",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "automation-edit",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "automation-edit",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "automation-edit",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "automation-edit",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "review",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "review",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "review",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "review",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "review",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "review",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "review",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "review",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "review",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "review",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "review",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "review",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "command-output",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "command-output",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "command-output",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "command-output",
+      "viewport": [
+        1180,
+        760
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "command-output",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "command-output",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "command-output",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "command-output",
+      "viewport": [
+        600,
+        620
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "command-output",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "command-output",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "light",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "command-output",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "zh-CN",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    },
+    {
+      "state": "command-output",
+      "viewport": [
+        480,
+        600
+      ],
+      "theme": "dark",
+      "locale": "en-US",
+      "reference": [],
+      "candidate": [],
+      "status": "MISSING"
+    }
+  ],
+  "rejected": [
+    {
+      "path": "docs/visual-parity/runs/21477/volt-settings-wide/capture.json",
+      "reason": "candidate: screenshot state has not been visually verified"
+    }
+  ],
+  "scope": "capture coverage; comparison and action evidence are separate"
+}

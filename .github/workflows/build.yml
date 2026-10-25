@@ -6,6 +6,8 @@ on:
     branches:
       - main
       - pi-rust
+    tags:
+      - 'v*'
   pull_request:
     branches:
       - main
@@ -37,11 +39,26 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] || exit 1
+          version=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "pi-desktop"))')
+          [[ "$RELEASE_TAG" == "v$version" ]] || { echo "Release tag does not match package version"; exit 1; }
+
       - name: Run Cargo Check
-        run: cargo check --workspace --all-targets
+        run: cargo check --locked --workspace --all-targets
+
+      - name: Run Rustfmt Check
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Run Cargo Test
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
 
   build-macos:
     name: Build macOS Binary (arm64)
@@ -53,18 +70,25 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
       - name: Build Desktop Release
-        run: cargo build --release -p pi-desktop
+        run: cargo build --locked --release --workspace --bins --target aarch64-apple-darwin
+
+      - name: Package macOS binaries
+        run: |
+          mkdir -p dist
+          tar -czf dist/volt-macos-arm64.tar.gz -C target/aarch64-apple-darwin/release volt office-cli calc-cli
 
       - name: Upload macOS Binary
         uses: actions/upload-artifact@v4
         with:
-          name: pi-desktop-macos-arm64
-          path: target/release/pi-desktop
+          name: volt-macos-arm64
+          path: dist/volt-macos-arm64.tar.gz
           if-no-files-found: error
           retention-days: 14
 
@@ -83,12 +107,83 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build Desktop Release
-        run: cargo build --release -p pi-desktop
+        run: cargo build --locked --release --workspace --bins
 
-      - name: Upload Windows Binary
+      - name: Validate Windows package entrypoint
+        shell: pwsh
+        run: |
+          cargo test --locked --workspace
+          if ($LASTEXITCODE -ne 0) { throw "Windows tests failed" }
+          ./scripts/test-install.ps1 -ExePath ./target/release/volt.exe
+
+      - name: Prepare Windows Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist/windows -Force | Out-Null
+          Copy-Item target/release/volt.exe dist/windows/
+          Copy-Item target/release/office-cli.exe dist/windows/
+          Copy-Item target/release/calc-cli.exe dist/windows/
+          Copy-Item scripts/install.ps1 dist/windows/
+          Copy-Item README.md dist/windows/
+          Compress-Archive -Path dist/windows/* -DestinationPath dist/volt-windows-x64.zip -Force
+
+      - name: Upload Windows Executable
         uses: actions/upload-artifact@v4
         with:
-          name: pi-desktop-windows-x64
-          path: target/release/pi-desktop.exe
+          name: volt-windows-x64-exe
+          path: target/release/volt.exe
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload Windows Zip Package
+        uses: actions/upload-artifact@v4
+        with:
+          name: volt-windows-x64-bundle
+          path: dist/volt-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release Assets
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: volt-macos-arm64
+          path: dist
+
+      - name: Download Windows executable artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: volt-windows-x64-exe
+          path: dist
+
+      - name: Download Windows bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: volt-windows-x64-bundle
+          path: dist
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          mv dist/volt.exe dist/volt-windows-x64.exe
+          cd dist
+          sha256sum volt-windows-x64.exe > volt-windows-x64.exe.sha256
+          sha256sum volt-macos-arm64.tar.gz volt-windows-x64.zip > SHA256SUMS
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          files: |
+            dist/volt-macos-arm64.tar.gz
+            dist/volt-windows-x64.zip
+            dist/SHA256SUMS
+            dist/volt-windows-x64.exe
+            dist/volt-windows-x64.exe.sha256

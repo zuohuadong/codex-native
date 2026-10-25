@@ -1,0 +1,17 @@
+{
+  "checked_at": "2026-10-24T00:23:10.819704+00:00",
+  "status": "BLOCKED_REFERENCE_MISMATCH",
+  "installed": {
+    "bundle_id": "com.openai.codex",
+    "version": "26.1016.62342",
+    "build": "21477",
+    "asar_sha256": "5b5cf52887cfd4de19cb5862155a8ef6cf58830c0a2fc592b72060cfcc3be869"
+  },
+  "pinned": {
+    "bundle_id": "com.openai.codex",
+    "version": "26.901.51231",
+    "build": "8109",
+    "asar_sha256": "64fc2f27d2dddfa968acfacbe5e4e0328071bdc406351ff4a7d18f0b4692c83d"
+  },
+  "scope": "bundle identity only; no pixel or interaction acceptance"
+}

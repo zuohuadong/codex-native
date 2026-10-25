@@ -1,7 +1,7 @@
-use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use serde_json::Value;
+use std::path::{Path, PathBuf};
 
 use super::Tool;
 
@@ -81,7 +81,10 @@ impl Tool for ReadFileTool {
             .unwrap_or(total_lines);
 
         if start > total_lines {
-            return Ok(format!("File has only {} lines (requested start at line {})", total_lines, start));
+            return Ok(format!(
+                "File has only {} lines (requested start at line {})",
+                total_lines, start
+            ));
         }
 
         let slice = &lines[(start - 1)..end];
@@ -153,7 +156,11 @@ impl Tool for WriteFileTool {
         }
 
         tokio::fs::write(&full_path, content).await?;
-        Ok(format!("Successfully wrote {} bytes to {:?}", content.len(), full_path))
+        Ok(format!(
+            "Successfully wrote {} bytes to {:?}",
+            content.len(),
+            full_path
+        ))
     }
 }
 
@@ -226,11 +233,18 @@ impl Tool for EditFileTool {
             bail!("target_content not found in {:?}", full_path);
         }
         if count > 1 {
-            bail!("target_content found {} times in {:?}; must be unique", count, full_path);
+            bail!(
+                "target_content found {} times in {:?}; must be unique",
+                count,
+                full_path
+            );
         }
 
         let new_content = content.replacen(target, replacement, 1);
         tokio::fs::write(&full_path, new_content).await?;
-        Ok(format!("Successfully replaced 1 occurrence in {:?}", full_path))
+        Ok(format!(
+            "Successfully replaced 1 occurrence in {:?}",
+            full_path
+        ))
     }
 }

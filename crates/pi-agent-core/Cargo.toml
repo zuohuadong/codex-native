@@ -16,8 +16,23 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 tracing = { workspace = true }
 reqwest = { workspace = true }
-walkdir = { workspace = true }
 regex = { workspace = true }
+flate2 = "1.0"
 
 [dev-dependencies]
 tempfile = "3.17"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "office-cli"
+path = "src/bin/office_cli.rs"
+
+[[bin]]
+name = "calc-cli"
+path = "src/bin/calc_cli.rs"
+
+[[bin]]
+name = "sensenova-live-test"
+path = "src/bin/sensenova_live_test.rs"

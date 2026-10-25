@@ -1,0 +1,17 @@
+{
+  "checked_at": "2026-10-24T00:35:03.834554+00:00",
+  "status": "IDENTITY_MATCH",
+  "installed": {
+    "bundle_id": "com.openai.codex",
+    "version": "26.1016.62342",
+    "build": "21477",
+    "asar_sha256": "5b5cf52887cfd4de19cb5862155a8ef6cf58830c0a2fc592b72060cfcc3be869"
+  },
+  "pinned": {
+    "bundle_id": "com.openai.codex",
+    "version": "26.1016.62342",
+    "build": "21477",
+    "asar_sha256": "5b5cf52887cfd4de19cb5862155a8ef6cf58830c0a2fc592b72060cfcc3be869"
+  },
+  "scope": "bundle identity only; no pixel or interaction acceptance"
+}

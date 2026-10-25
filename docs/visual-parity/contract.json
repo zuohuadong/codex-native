@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "reference": {
+    "bundle_id": "com.openai.codex",
+    "version": "26.1016.62342",
+    "build": "21477",
+    "asar_sha256": "5b5cf52887cfd4de19cb5862155a8ef6cf58830c0a2fc592b72060cfcc3be869"
+  },
+  "source": "installed Codex bundle, explicitly adopted by user on 2026-10-24; validate with probe_reference.py before each capture",
+  "default_viewport": [
+    1180,
+    760
+  ],
+  "default_scale": 2,
+  "acceptance": "exact opaque PNG pixels under identical capture conditions; per-frame only",
+  "required_states": [
+    "chat-empty",
+    "chat-streaming",
+    "tool-running",
+    "tool-failed",
+    "provider-error",
+    "queue-paused",
+    "settings",
+    "settings-validation-error",
+    "skills",
+    "automation-edit",
+    "review",
+    "command-output"
+  ],
+  "required_viewports": [
+    [
+      1180,
+      760
+    ],
+    [
+      600,
+      620
+    ],
+    [
+      480,
+      600
+    ]
+  ],
+  "required_themes": [
+    "light",
+    "dark"
+  ],
+  "required_locales": [
+    "zh-CN",
+    "en-US"
+  ],
+  "historical_reference": "contract-8109.json",
+  "geometry_status": "Provisional capture targets inherited from 8109; measure actual 21477 layout before adjusting native tokens.",
+  "viewport_measurement": "21477 settings window measured at 1180x760, 600x620, and 480x600; requesting 480x480 clamped height to 600."
+}

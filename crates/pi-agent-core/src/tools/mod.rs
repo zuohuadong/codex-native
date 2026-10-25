@@ -1,11 +1,13 @@
 pub mod bash;
+pub mod calc;
 pub mod fs;
+pub mod office;
 pub mod search;
 
-use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
+use std::sync::Arc;
 
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -33,7 +35,9 @@ impl ToolRegistry {
         registry.register(Arc::new(fs::WriteFileTool::new(ws.clone())));
         registry.register(Arc::new(fs::EditFileTool::new(ws.clone())));
         registry.register(Arc::new(search::GrepTool::new(ws.clone())));
-        registry.register(Arc::new(search::FindTool::new(ws)));
+        registry.register(Arc::new(search::FindTool::new(ws.clone())));
+        registry.register(Arc::new(calc::CalcTool::new()));
+        registry.register(Arc::new(office::OfficeTool::new(ws)));
         registry
     }
 
@@ -46,16 +50,20 @@ impl ToolRegistry {
     }
 
     pub fn to_schema_json(&self) -> Value {
-        let tools: Vec<Value> = self.tools.iter().map(|t| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": t.name(),
-                    "description": t.description(),
-                    "parameters": t.parameters_schema(),
-                }
+        let tools: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name(),
+                        "description": t.description(),
+                        "parameters": t.parameters_schema(),
+                    }
+                })
             })
-        }).collect();
+            .collect();
         Value::Array(tools)
     }
 }

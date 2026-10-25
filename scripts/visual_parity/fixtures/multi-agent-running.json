@@ -1,0 +1,123 @@
+{
+  "id": "visual-workflow",
+  "revision": 1,
+  "parent_message_id": "visual-request",
+  "title": "多 Agent 对话卡片 · 离线视觉样例 · running",
+  "model": "Fixture model",
+  "status": "running",
+  "delivery": "仅用于检查多 Agent 状态布局，不代表真实 Agent 执行结果。",
+  "changes": [],
+  "stages": [
+    {
+      "id": "build",
+      "label": "并行开工：封装与对比",
+      "status": "running",
+      "nodes": [
+        {
+          "id": "pack",
+          "label": "封装工程师",
+          "kind": "agent",
+          "status": "running",
+          "detail": "离线样例：封装结果详情。",
+          "avatar_index": 0
+        },
+        {
+          "id": "engineer",
+          "label": "工程师",
+          "kind": "agent",
+          "status": "running",
+          "avatar_index": 1
+        },
+        {
+          "id": "compare",
+          "label": "对比调研员",
+          "kind": "agent",
+          "status": "completed",
+          "avatar_index": 2
+        }
+      ],
+      "progress": {
+        "settled": 1,
+        "observed": 3
+      }
+    },
+    {
+      "id": "record",
+      "label": "吸收昨夜快照裁决",
+      "status": "waiting",
+      "nodes": [
+        {
+          "id": "recorder",
+          "label": "记录员",
+          "kind": "agent",
+          "status": "waiting",
+          "avatar_index": 3
+        }
+      ],
+      "progress": null
+    },
+    {
+      "id": "gate",
+      "label": "全量回归门禁",
+      "status": "waiting",
+      "nodes": [
+        {
+          "id": "script",
+          "label": "脚本",
+          "kind": "script",
+          "status": "waiting"
+        },
+        {
+          "id": "fix",
+          "label": "修复工程师",
+          "kind": "agent",
+          "status": "waiting",
+          "avatar_index": 4
+        }
+      ],
+      "progress": null
+    },
+    {
+      "id": "audit",
+      "label": "独立审计：换人验收",
+      "status": "waiting",
+      "nodes": [
+        {
+          "id": "reviewer",
+          "label": "独立审计员",
+          "kind": "agent",
+          "status": "waiting",
+          "avatar_index": 5
+        },
+        {
+          "id": "fix",
+          "label": "修复工程师",
+          "kind": "agent",
+          "status": "waiting",
+          "avatar_index": 4
+        },
+        {
+          "id": "script",
+          "label": "脚本",
+          "kind": "script",
+          "status": "waiting"
+        }
+      ],
+      "progress": null
+    },
+    {
+      "id": "finish",
+      "label": "收口：终跑门禁并交付",
+      "status": "waiting",
+      "nodes": [
+        {
+          "id": "script",
+          "label": "脚本",
+          "kind": "script",
+          "status": "waiting"
+        }
+      ],
+      "progress": null
+    }
+  ]
+}
