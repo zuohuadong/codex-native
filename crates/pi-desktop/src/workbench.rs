@@ -2253,6 +2253,59 @@ impl PiDesktopApp {
             .clone()
     }
 
+    fn render_assistant_content(
+        &self,
+        message_id: &str,
+        text: &str,
+        c: &ThemeColors,
+        fade: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let segments = crate::generative_ui::parse_message_segments(text);
+        let font_size = f32::from(self.preferences.ui_font_size_px);
+        let is_dark = Theme::global(cx).is_dark();
+        let mut elements = Vec::new();
+
+        for (idx, segment) in segments.into_iter().enumerate() {
+            match segment {
+                crate::generative_ui::ContentSegment::Markdown(md) => {
+                    if !md.is_empty() {
+                        elements.push(
+                            assistant_markdown(
+                                font_size,
+                                format!("assistant-{message_id}-{idx}"),
+                                md,
+                                c,
+                                fade && idx == 0,
+                                cx,
+                            )
+                            .into_any_element(),
+                        );
+                    }
+                }
+                crate::generative_ui::ContentSegment::GenerativeUi(node) => {
+                    elements.push(
+                        div()
+                            .my_2()
+                            .child(crate::generative_ui::render_ui_node(
+                                &node,
+                                c,
+                                font_size,
+                                is_dark,
+                                |action, app: &mut PiDesktopApp, window, cx| {
+                                    app.handle_generative_ui_action(action, window, cx);
+                                },
+                                cx,
+                            ))
+                            .into_any_element(),
+                    );
+                }
+            }
+        }
+
+        elements
+    }
+
     fn message_actions(
         &self,
         message_id: &str,
@@ -3247,10 +3300,9 @@ impl PiDesktopApp {
                     .w_full()
                     .min_w_0()
                     .when(work_before_text, |text| text.mt(px(4.)))
-                    .child(assistant_markdown(
-                        f32::from(self.preferences.ui_font_size_px),
-                        format!("assistant-{message_id}"),
-                        copy_text.clone(),
+                    .children(self.render_assistant_content(
+                        &message_id,
+                        &copy_text,
                         c,
                         !self.preferences.reduced_motion && streaming,
                         cx,

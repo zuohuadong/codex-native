@@ -50,6 +50,19 @@ pub fn reconcile_interrupted_tools(messages: &mut Vec<Message>) {
     *messages = reconciled;
 }
 impl PiDesktopApp {
+    pub fn handle_generative_ui_action(
+        &mut self,
+        action: &crate::generative_ui::UiAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let prompt = format!("已执行操作【{}】(ID: {})", action.label, action.id);
+        self.input_state.update(cx, |input, cx| {
+            input.set_value(prompt, window, cx);
+        });
+        self.trigger_send(window, cx);
+    }
+
     pub fn trigger_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let prompt = self.input_state.read(cx).value().to_string();
         if prompt.trim().is_empty() {

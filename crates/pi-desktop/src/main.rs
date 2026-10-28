@@ -10,6 +10,7 @@ use std::sync::Arc;
 mod desktop_state;
 mod execution;
 mod file_summary;
+mod generative_ui;
 mod i18n;
 mod installer;
 mod interactions;
