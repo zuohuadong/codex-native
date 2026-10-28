@@ -13,6 +13,13 @@ pub struct ThemeColors {
     pub sidebar_bg: u32,
     pub text_primary: u32,
     pub card_bg: u32,
+    /// Zai `--color-panel`. Light is white; dark is #202020, not the card gray.
+    pub panel_bg: u32,
+    /// Zai tag at 50%, used for inline code (`--color-markdown-inline-code` / 50).
+    pub inline_code_bg: u32,
+    /// Zai `--color-icon-blue` (`--color-terminal-bright-blue`).
+    pub link: u32,
+    /// Zai `--color-card-border`, an alias of the 10% `--color-border`.
     pub card_border: u32,
     pub card_user_bg: u32,
     pub dock_bg: u32,
@@ -34,7 +41,12 @@ pub struct ThemeColors {
     pub workflow_node_bg: u32,
     pub workflow_node_hover: u32,
     pub workflow_active: u32,
+    /// Zai `--color-destructive` (`#e03131` light / `#ff5c5c` dark).
     pub workflow_error: u32,
+    /// `--color-destructive-surface`: 10% light, 16% dark.
+    pub destructive_surface: u32,
+    /// `border-destructive/30` on the same destructive token.
+    pub destructive_border: u32,
     pub workflow_connector: u32,
     pub workflow_avatars: [u32; 9],
 }
@@ -46,7 +58,10 @@ impl ThemeColors {
             sidebar_bg: 0xf0f0f0,
             text_primary: 0x262626,
             card_bg: 0xffffff,
-            card_border: 0xe6e6e6,
+            panel_bg: 0xffffff,
+            inline_code_bg: 0xe6e6e680,
+            link: 0x0066dd,
+            card_border: 0x0d0d0d1a,
             card_user_bg: 0x0d0d0d08,
             dock_bg: 0xffffff,
             dock_border: 0x0d0d0d1a,
@@ -64,6 +79,8 @@ impl ThemeColors {
             workflow_node_hover: 0x0d0d0d0d,
             workflow_active: 0xe07b00,
             workflow_error: 0xe03131,
+            destructive_surface: 0xe031311a,
+            destructive_border: 0xe031314d,
             workflow_connector: 0xa7a7a7,
             workflow_avatars: [
                 0x54b9a6, 0xf19d38, 0x6464ef, 0x885cf5, 0x3c82f6, 0xed712e, 0xeb4699, 0x5bc67a,
@@ -75,10 +92,13 @@ impl ThemeColors {
     pub fn dark() -> Self {
         Self {
             root_bg: 0x161616,
-            sidebar_bg: 0x161616,
+            sidebar_bg: 0x2b2b2b,
             text_primary: 0xd4d4d4,
             card_bg: 0x2b2b2b,
-            card_border: 0x303030,
+            panel_bg: 0x202020,
+            inline_code_bg: 0x36363680,
+            link: 0x80beff,
+            card_border: 0xffffff1a,
             card_user_bg: 0xffffff0d,
             dock_bg: 0x2b2b2b,
             dock_border: 0xffffff1a,
@@ -96,11 +116,33 @@ impl ThemeColors {
             workflow_node_hover: 0xffffff1a,
             workflow_active: 0xff8a30,
             workflow_error: 0xff5c5c,
+            destructive_surface: 0xff5c5c29,
+            destructive_border: 0xff5c5c4d,
             workflow_connector: 0x5a5a5a,
             workflow_avatars: [
                 0x54b9a6, 0xf19d38, 0x6464ef, 0x885cf5, 0x3c82f6, 0xed712e, 0xeb4699, 0x5bc67a,
                 0xea4045,
             ],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ThemeColors;
+
+    #[test]
+    fn destructive_tokens_follow_the_zai_cascade() {
+        let light = ThemeColors::light();
+        assert_eq!(light.card_border, 0x0d0d0d1a);
+        assert_eq!(light.workflow_error, 0xe03131);
+        assert_eq!(light.destructive_surface, 0xe031311a);
+        assert_eq!(light.destructive_border, 0xe031314d);
+
+        let dark = ThemeColors::dark();
+        assert_eq!(dark.card_border, 0xffffff1a);
+        assert_eq!(dark.workflow_error, 0xff5c5c);
+        assert_eq!(dark.destructive_surface, 0xff5c5c29);
+        assert_eq!(dark.destructive_border, 0xff5c5c4d);
     }
 }

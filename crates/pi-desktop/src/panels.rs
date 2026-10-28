@@ -1,7 +1,7 @@
 use super::*;
 use crate::workbench::{action, heading, icon_button};
 use gpui_kit::assets::IconName as Glyph;
-use gpui_kit::component::text::TextView;
+use gpui_kit::prelude::FluentBuilder;
 
 pub(super) const REVIEW_SIDE_PANE_WIDTH: Pixels = px(380.);
 pub(super) const REVIEW_SINGLE_COLUMN_BREAKPOINT: Pixels = px(1180.);
@@ -21,6 +21,20 @@ pub(super) enum CommandDrawerState {
     Empty,
     Running,
     Ready,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum QueuePanelStatus {
+    Paused,
+    Active(usize),
+}
+
+pub(super) fn queue_panel_status(paused: bool, count: usize) -> QueuePanelStatus {
+    if paused {
+        QueuePanelStatus::Paused
+    } else {
+        QueuePanelStatus::Active(count)
+    }
 }
 
 /// Below this width Review replaces the conversation instead of sharing the row.
@@ -87,11 +101,44 @@ impl PiDesktopApp {
         self.terminal_visible = true;
     }
 
-    pub fn toggle_review(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workflow_pane.is_some() {
+            self.close_workflow_pane(window, cx);
+        }
         self.review_visible = !self.review_visible;
+        // The old side-pane control may unmount in the single-column layout.
+        self.root_focus.focus(window, cx);
         if self.review_visible {
             self.refresh_review(cx);
         }
+        cx.notify();
+    }
+
+    pub fn open_review_file(&mut self, file: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workflow_pane.is_some() {
+            self.close_workflow_pane(window, cx);
+        }
+        self.review_visible = true;
+        self.root_focus.focus(window, cx);
+        let Some(relative) = review::workspace_relative_path(&self.workspace_dir, &file) else {
+            self.review.generation += 1;
+            self.review.loading = false;
+            self.review.selected = None;
+            self.review.diff.clear();
+            self.review.error = Some(
+                self.tr(
+                    "文件不在当前工作区内",
+                    "File is outside the current workspace",
+                )
+                .into(),
+            );
+            cx.notify();
+            return;
+        };
+        self.review_search
+            .update(cx, |input, cx| input.clean(window, cx));
+        self.review.selected = Some(relative);
+        self.refresh_review(cx);
         cx.notify();
     }
 
@@ -163,7 +210,36 @@ impl PiDesktopApp {
             self.review.error.is_some(),
             files.len(),
         );
-        let mut view = div()
+        let header = div()
+            .h_flex()
+            .items_center()
+            .h(px(48.))
+            .px_3()
+            .border_b_1()
+            .border_color(rgba(colors.card_border))
+            .gap_2()
+            .child(
+                div()
+                    .text_size(self.ui_text(14.))
+                    .font_semibold()
+                    .text_color(rgb(colors.text_primary))
+                    .child(self.tr("审查变更", "Review changes")),
+            )
+            .child(div().flex_1())
+            .child(
+                icon_button(
+                    "refresh-review",
+                    self.tr("刷新", "Refresh"),
+                    Glyph::RefreshCw,
+                )
+                .disabled(self.review.loading)
+                .on_click(cx.listener(|this, _, _, cx| this.refresh_review(cx))),
+            )
+            .child(
+                icon_button("close-review", self.tr("关闭", "Close"), Glyph::X)
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_review(window, cx))),
+            );
+        let mut content = div()
             .v_flex()
             .flex_1()
             .min_h_0()
@@ -171,27 +247,6 @@ impl PiDesktopApp {
             .min_w_0()
             .p_3()
             .gap_3()
-            .child(
-                div()
-                    .h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(heading(self.tr("审查变更", "Review changes")))
-                    .child(div().flex_1())
-                    .child(
-                        icon_button(
-                            "refresh-review",
-                            self.tr("刷新", "Refresh"),
-                            Glyph::RefreshCw,
-                        )
-                        .disabled(self.review.loading)
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_review(cx))),
-                    )
-                    .child(
-                        icon_button("close-review", self.tr("关闭", "Close"), Glyph::X)
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_review(cx))),
-                    ),
-            )
             .child(
                 div().h_flex().w_full().flex_wrap().gap_1().children(
                     [
@@ -218,14 +273,14 @@ impl PiDesktopApp {
             .child(Input::new(&self.review_search).h(px(32.)));
         match state {
             ReviewPanelState::Loading => {
-                view = view.child(self.review_status_surface(
+                content = content.child(self.review_status_surface(
                     colors,
                     self.tr("正在读取变更…", "Loading changes…"),
                     false,
                 ));
             }
             ReviewPanelState::Error => {
-                view = view.child(self.review_status_surface(
+                content = content.child(self.review_status_surface(
                     colors,
                     self.review.error.clone().unwrap_or_else(|| {
                         self.tr("无法读取变更", "Could not read changes")
@@ -240,11 +295,11 @@ impl PiDesktopApp {
                 } else {
                     self.tr("没有匹配的文件", "No matching files")
                 };
-                view = view.child(self.review_status_surface(colors, message, false));
+                content = content.child(self.review_status_surface(colors, message, false));
             }
             ReviewPanelState::Ready => {
                 let files_scroll = self.review_files_scroll.clone();
-                view = view
+                content = content
                     .child(
                         div()
                             .v_flex()
@@ -302,7 +357,7 @@ impl PiDesktopApp {
                             .min_h_0()
                             .rounded(px(8.))
                             .border_1()
-                            .border_color(rgba(colors.settings_border))
+                            .border_color(rgba(colors.card_border))
                             .overflow_hidden()
                             .child(
                                 div()
@@ -310,7 +365,8 @@ impl PiDesktopApp {
                                     .px_3()
                                     .py_2()
                                     .border_b_1()
-                                    .border_color(rgba(colors.settings_border))
+                                    .border_color(rgba(colors.card_border))
+                                    .bg(rgba(colors.card_user_bg))
                                     .font_family(cx.theme().mono_font_family.clone())
                                     .text_size(px(12.))
                                     .text_color(rgba(colors.foreground_subtle))
@@ -322,11 +378,32 @@ impl PiDesktopApp {
                                             .unwrap_or_else(|| self.tr("差异", "Diff").to_string()),
                                     ),
                             )
-                            .child(self.review_diff_body()),
+                            .child(if self.review.selected.is_some() {
+                                self.review_diff_body(colors, cx)
+                            } else {
+                                self.review_status_surface(
+                                    colors,
+                                    self.tr(
+                                        "所选文件不在此分类中",
+                                        "Selected file is not in this category",
+                                    ),
+                                    false,
+                                )
+                                .into_any_element()
+                            }),
                     );
             }
         }
-        view.into_any_element()
+        div()
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .h_full()
+            .min_w_0()
+            .bg(rgb(colors.root_bg))
+            .child(header)
+            .child(content)
+            .into_any_element()
     }
 
     fn review_status_surface(
@@ -339,22 +416,26 @@ impl PiDesktopApp {
             .rounded(px(8.))
             .border_1()
             .border_color(rgba(if error {
-                0xb4231833
+                colors.destructive_border
             } else {
-                colors.settings_border
+                colors.card_border
             }))
-            .bg(rgb(colors.card_bg))
+            .bg(if error {
+                rgba(colors.destructive_surface)
+            } else {
+                rgb(colors.card_bg)
+            })
             .p_3()
             .text_size(px(13.))
-            .text_color(rgba(if error {
-                0xb42318
+            .text_color(if error {
+                rgb(colors.workflow_error)
             } else {
-                colors.foreground_subtle
-            }))
+                rgba(colors.foreground_subtle)
+            })
             .child(message.into())
     }
 
-    fn review_diff_body(&self) -> AnyElement {
+    fn review_diff_body(&self, colors: &ThemeColors, cx: &Context<Self>) -> AnyElement {
         let diff_scroll = self.review_diff_scroll.clone();
         div()
             .id("review-diff")
@@ -371,10 +452,14 @@ impl PiDesktopApp {
                 }
             })
             .p_3()
-            .child(
-                TextView::markdown("review-text", fenced(&self.review.diff, "diff"))
-                    .selectable(true),
-            )
+            .font_family(cx.theme().mono_font_family.clone())
+            .text_size(self.ui_text(14.))
+            .line_height(px(20.))
+            .text_color(rgb(colors.text_primary))
+            .child(gpui_kit::base::SelectableText::new(
+                "review-text",
+                self.review.diff.clone(),
+            ))
             .into_any_element()
     }
 
@@ -428,28 +513,33 @@ impl PiDesktopApp {
                     })
                     .children(outputs.into_iter().map(|tool| {
                         let border = if tool.is_error {
-                            0xb4231833
+                            colors.destructive_border
                         } else {
                             colors.settings_border
                         };
-                        let text = if tool.is_error {
-                            0xb42318
+                        let text_color = if tool.is_error {
+                            rgb(colors.workflow_error)
                         } else {
-                            colors.foreground_subtle
+                            rgba(colors.foreground_subtle)
+                        };
+                        let background = if tool.is_error {
+                            rgba(colors.destructive_surface)
+                        } else {
+                            rgb(colors.root_bg)
                         };
                         div()
                             .flex_shrink_0()
                             .rounded(px(8.))
                             .border_1()
                             .border_color(rgba(border))
-                            .bg(rgb(colors.root_bg))
+                            .bg(background)
                             .p_2()
                             .child(
                                 div()
                                     .font_family(cx.theme().mono_font_family.clone())
                                     .text_size(px(14.))
                                     .line_height(px(20.))
-                                    .text_color(rgba(text))
+                                    .text_color(text_color)
                                     .child(gpui_kit::base::SelectableText::new(
                                         format!("terminal-{}", tool.tool_call_id),
                                         tool.output.clone(),
@@ -466,7 +556,7 @@ impl PiDesktopApp {
             .overflow_hidden()
             .p_3()
             .border_t_1()
-            .border_color(rgb(colors.card_border))
+            .border_color(rgba(colors.card_border))
             .bg(rgb(colors.card_bg))
             .v_flex()
             .gap_2()
@@ -511,7 +601,7 @@ impl PiDesktopApp {
             .min_h_0()
             .rounded(px(8.))
             .border_1()
-            .border_color(rgba(colors.settings_border))
+            .border_color(rgba(colors.card_border))
             .bg(rgb(colors.root_bg))
             .p_3()
             .text_size(px(13.))
@@ -520,7 +610,12 @@ impl PiDesktopApp {
             .into_any_element()
     }
 
-    pub fn queue_view(&self, colors: &ThemeColors, cx: &mut Context<Self>) -> AnyElement {
+    pub fn queue_view(
+        &self,
+        content_width: Pixels,
+        colors: &ThemeColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let state = self
             .task_states
             .get(&self.session.id)
@@ -529,58 +624,166 @@ impl PiDesktopApp {
         if state.queue.is_empty() {
             return div().into_any_element();
         }
+        let queue_len = state.queue.len();
+        let paused = state.queue_paused;
+        let empty = !self
+            .session
+            .messages
+            .iter()
+            .any(|m| m.role != pi_agent_core::Role::System);
+        let target_width = if empty {
+            content_width.min(px(672.))
+        } else {
+            crate::workbench::conversation_composer_width(content_width)
+        };
         div()
             .id("pending-queue")
-            .v_flex()
-            .max_h(px(140.))
-            .overflow_y_scroll()
+            .w_full()
             .px_4()
             .pb_2()
-            .gap_1()
+            .h_flex()
+            .justify_center()
             .child(
                 div()
-                    .h_flex()
+                    .w_full()
+                    .max_w(target_width)
+                    .v_flex()
                     .gap_2()
-                    .items_center()
+                    .p_3()
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(rgba(colors.settings_border))
+                    .bg(rgb(colors.dock_bg))
+                    .shadow_xs()
                     .child(
                         div()
-                            .text_size(px(12.))
-                            .text_color(rgba(colors.foreground_subtle))
-                            .child(format!(
-                                "{} · {}",
-                                self.tr("待发送", "Queued"),
-                                state.queue.len()
-                            )),
+                            .h_flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        Icon::new(if paused {
+                                            Glyph::Pause
+                                        } else {
+                                            Glyph::ListOrdered
+                                        })
+                                        .size(px(14.))
+                                        .text_color(rgba(colors.foreground_subtle)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(12.))
+                                            .font_medium()
+                                            .text_color(rgba(colors.foreground_subtle))
+                                            .child(match queue_panel_status(paused, queue_len) {
+                                                QueuePanelStatus::Paused => self
+                                                    .tr("队列已暂停", "Queue paused")
+                                                    .to_string(),
+                                                QueuePanelStatus::Active(count) => {
+                                                    format!(
+                                                        "{} · {}",
+                                                        self.tr("待发送队列", "Queued prompts"),
+                                                        count
+                                                    )
+                                                }
+                                            }),
+                                    ),
+                            )
+                            .when(paused, |header| {
+                                header.child(
+                                    action("queue-resume", self.tr("继续", "Resume"), Glyph::Play)
+                                        .disabled(self.is_executing)
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.resume_queue(cx)),
+                                        ),
+                                )
+                            }),
                     )
                     .child(
-                        action("queue-resume", self.tr("继续", "Resume"), Glyph::Play)
-                            .disabled(self.is_executing)
-                            .on_click(cx.listener(|this, _, _, cx| this.resume_queue(cx))),
+                        div()
+                            .id("pending-queue-items")
+                            .v_flex()
+                            .gap_1()
+                            .max_h(px(140.))
+                            .overflow_y_scroll()
+                            .children(state.queue.into_iter().enumerate().map(
+                                |(index, prompt)| {
+                                    div()
+                                        .h_flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .px_3()
+                                        .py_2()
+                                        .rounded(px(8.))
+                                        .border_1()
+                                        .border_color(rgba(colors.card_border))
+                                        .bg(rgba(colors.card_user_bg))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_size(px(14.))
+                                                .child(prompt),
+                                        )
+                                        .child(
+                                            icon_button(
+                                                format!("queue-edit-{index}"),
+                                                self.tr("编辑", "Edit"),
+                                                Glyph::SquarePen,
+                                            )
+                                            .on_click(
+                                                cx.listener(move |this, _, window, cx| {
+                                                    if let Some(text) = this
+                                                        .task_states
+                                                        .entry(this.session.id.clone())
+                                                        .or_default()
+                                                        .queue
+                                                        .remove(index)
+                                                    {
+                                                        this.input_state.update(cx, |input, cx| {
+                                                            input.set_value(
+                                                                text.clone(),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                        this.drafts
+                                                            .insert(this.session.id.clone(), text);
+                                                        this.persist_active_session();
+                                                        this.focus_composer(window, cx);
+                                                        cx.notify();
+                                                    }
+                                                }),
+                                            ),
+                                        )
+                                        .child(
+                                            icon_button(
+                                                format!("queue-remove-{index}"),
+                                                self.tr("移除", "Remove"),
+                                                Glyph::X,
+                                            )
+                                            .on_click(
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.task_states
+                                                        .entry(this.session.id.clone())
+                                                        .or_default()
+                                                        .queue
+                                                        .remove(index);
+                                                    this.persist_active_session();
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                        )
+                                },
+                            )),
                     ),
             )
-            .children(state.queue.into_iter().enumerate().map(|(index, prompt)| {
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(div().flex_1().min_w_0().truncate().child(prompt))
-                    .child(
-                        action(
-                            format!("queue-remove-{index}"),
-                            self.tr("移除", "Remove"),
-                            Glyph::X,
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.task_states
-                                .entry(this.session.id.clone())
-                                .or_default()
-                                .queue
-                                .remove(index);
-                            this.persist_active_session();
-                            cx.notify();
-                        })),
-                    )
-            }))
             .into_any_element()
     }
 }
@@ -628,14 +831,16 @@ mod layout_tests {
         assert_eq!(command_drawer_state(true, true), CommandDrawerState::Ready);
         assert_eq!(command_drawer_state(true, false), CommandDrawerState::Ready);
     }
-}
 
-fn fenced(text: &str, language: &str) -> String {
-    let max_run = text
-        .split(|character| character != '`')
-        .map(str::len)
-        .max()
-        .unwrap_or(0);
-    let fence = "`".repeat(max_run.max(2) + 1);
-    format!("{fence}{language}\n{text}\n{fence}")
+    #[test]
+    fn queue_panel_distinguishes_paused_and_active_count() {
+        assert_eq!(
+            super::queue_panel_status(true, 5),
+            super::QueuePanelStatus::Paused
+        );
+        assert_eq!(
+            super::queue_panel_status(false, 3),
+            super::QueuePanelStatus::Active(3)
+        );
+    }
 }

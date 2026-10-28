@@ -58,6 +58,71 @@ impl PiDesktopApp {
         self.input_state
             .update(cx, |input, cx| input.clean(window, cx));
         self.drafts.remove(&self.session.id);
+
+        if let Some(cmd) = crate::workbench::parse_slash_command(&prompt) {
+            match cmd {
+                crate::workbench::SlashCommand::Compact => {
+                    self.session.messages.push(Message::user("/compact"));
+                    self.session.messages.push(Message::assistant(
+                        self.tr("会话历史已压缩。", "Conversation history compacted."),
+                    ));
+                    self.persist_active_session();
+                    cx.notify();
+                    return;
+                }
+                crate::workbench::SlashCommand::SendGoal { objective } => {
+                    self.task_states
+                        .entry(self.session.id.clone())
+                        .or_default()
+                        .set_goal(objective.clone());
+                    self.submit_prompt(objective, cx);
+                    return;
+                }
+                crate::workbench::SlashCommand::ResumeGoal => {
+                    let objective = self.task_states.get_mut(&self.session.id).and_then(|s| {
+                        if s.resume_goal() {
+                            s.goal.as_ref().map(|g| g.objective.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(obj) = objective {
+                        self.submit_prompt(obj, cx);
+                    } else {
+                        self.run_error = Some(
+                            self.tr(
+                                "当前没有可恢复的目标，请先使用 /goal 设定目标。",
+                                "No goal to resume. Set a goal first using /goal.",
+                            )
+                            .into(),
+                        );
+                        cx.notify();
+                    }
+                    return;
+                }
+                crate::workbench::SlashCommand::ClearGoal => {
+                    self.task_states
+                        .entry(self.session.id.clone())
+                        .or_default()
+                        .clear_goal();
+                    self.persist_active_session();
+                    cx.notify();
+                    return;
+                }
+                crate::workbench::SlashCommand::EmptyGoal => {
+                    self.run_error = Some(
+                        self.tr(
+                            "请输入目标内容，例如: /goal 实现用户登录",
+                            "Please provide a goal objective, e.g.: /goal implement user login",
+                        )
+                        .into(),
+                    );
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+
         if self.is_executing {
             self.task_states
                 .entry(self.session.id.clone())
@@ -79,6 +144,13 @@ impl PiDesktopApp {
             .entry(self.session.id.clone())
             .or_default()
             .begin();
+        if let Some(goal) = self
+            .task_states
+            .get_mut(&self.session.id)
+            .and_then(|s| s.goal.as_mut())
+        {
+            goal.status = "running".into();
+        }
         self.run_generation += 1;
         if !self
             .session
@@ -335,6 +407,18 @@ impl PiDesktopApp {
                 .entry(self.session.id.clone())
                 .or_default()
                 .error = None;
+        }
+        if let Some(state) = self.task_states.get_mut(&self.session.id) {
+            if let Some(goal) = &mut state.goal {
+                if self.run_stopped {
+                    goal.status = "paused".into();
+                } else if self.run_error.is_some() {
+                    goal.status = "failed".into();
+                } else {
+                    goal.iteration += 1;
+                    goal.status = "completed".into();
+                }
+            }
         }
         self.capture_task_state();
         self.persist_active_session();

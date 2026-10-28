@@ -18,6 +18,25 @@ pub struct Preferences {
     pub theme: ThemePreference,
     pub reduced_motion: bool,
     pub settings_section: Option<String>,
+    /// Interface text size in px. Icons, spacing, and fixed workflow geometry stay unscaled.
+    #[serde(default = "default_ui_font_size")]
+    pub ui_font_size_px: u8,
+}
+fn default_ui_font_size() -> u8 {
+    14
+}
+pub fn commit_ui_font_size(draft: &str, current: u8) -> u8 {
+    let current = current.clamp(12, 20);
+    let Some(parsed) = draft.trim().parse::<f32>().ok() else {
+        return current;
+    };
+    if !parsed.is_finite() {
+        return current;
+    }
+    parsed.round().clamp(12., 20.) as u8
+}
+pub fn ui_text_px(base: f32, font_size: u8) -> f32 {
+    base * f32::from(font_size.clamp(12, 20)) / 14.
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -28,6 +47,7 @@ impl Default for Preferences {
             theme: ThemePreference::default(),
             reduced_motion: false,
             settings_section: None,
+            ui_font_size_px: default_ui_font_size(),
         }
     }
 }
@@ -170,10 +190,18 @@ mod tests {
     fn theme_defaults_to_light_and_preserves_saved_choices() {
         use super::{Preferences, SavedDesktop, ThemePreference};
         assert_eq!(Preferences::default().theme, ThemePreference::Light);
+        assert_eq!(Preferences::default().ui_font_size_px, 14);
         for json in ["{}", r#"{"preferences":{}}"#] {
             let saved: SavedDesktop = serde_json::from_str(json).unwrap();
             assert_eq!(saved.preferences.theme, ThemePreference::Light);
+            assert_eq!(saved.preferences.ui_font_size_px, 14);
         }
+        assert_eq!(super::commit_ui_font_size("", 16), 16);
+        assert_eq!(super::commit_ui_font_size("11", 14), 12);
+        assert_eq!(super::commit_ui_font_size("20.4", 14), 20);
+        assert_eq!(super::commit_ui_font_size("99", 14), 20);
+        assert_eq!(super::ui_text_px(14., 14), 14.);
+        assert_eq!(super::ui_text_px(14., 20), 20.);
         for theme in [
             ThemePreference::Light,
             ThemePreference::Dark,

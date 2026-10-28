@@ -1,5 +1,40 @@
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalState {
+    pub objective: String,
+    pub status: String,
+    pub iteration: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileChangeItem {
+    pub path: String,
+    #[serde(default)]
+    pub additions: Option<usize>,
+    #[serde(default)]
+    pub deletions: Option<usize>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnFileChanges {
+    pub items: Vec<FileChangeItem>,
+}
+
+impl TurnFileChanges {
+    pub fn files_count(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn total_additions(&self) -> Option<usize> {
+        self.items.iter().map(|item| item.additions).sum()
+    }
+
+    pub fn total_deletions(&self) -> Option<usize> {
+        self.items.iter().map(|item| item.deletions).sum()
+    }
+}
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -9,6 +44,9 @@ pub struct TaskState {
     pub error: Option<String>,
     pub tokens: usize,
     pub workflows: Vec<pi_agent_core::workflow::WorkflowSnapshot>,
+    pub goal: Option<GoalState>,
+    pub pending_recovery: Option<String>,
+    pub file_changes: HashMap<String, TurnFileChanges>,
 }
 impl TaskState {
     pub fn update_workflow(&mut self, snapshot: pi_agent_core::workflow::WorkflowSnapshot) {
@@ -44,6 +82,27 @@ impl TaskState {
         self.error = Some(reason);
         self.queue_paused = true;
     }
+    pub fn set_goal(&mut self, objective: String) {
+        self.goal = Some(GoalState {
+            objective,
+            status: "running".into(),
+            iteration: 1,
+        });
+    }
+    pub fn resume_goal(&mut self) -> bool {
+        if let Some(goal) = &mut self.goal {
+            goal.status = "running".into();
+            true
+        } else {
+            false
+        }
+    }
+    pub fn clear_goal(&mut self) {
+        self.goal = None;
+    }
+    pub fn get_file_changes(&self, message_id: &str) -> Option<&TurnFileChanges> {
+        self.file_changes.get(message_id)
+    }
 }
 
 #[cfg(test)]
@@ -73,6 +132,60 @@ mod tests {
         assert_eq!(state.next_prompt().as_deref(), Some("first"));
         assert_eq!(state.next_prompt().as_deref(), Some("second"));
         assert!(state.next_prompt().is_none());
+    }
+    #[test]
+    fn goal_state_round_trip_and_transitions() {
+        let mut state = TaskState::default();
+        assert!(state.goal.is_none());
+        state.set_goal("Ship feature".into());
+        assert_eq!(
+            state.goal,
+            Some(GoalState {
+                objective: "Ship feature".into(),
+                status: "running".into(),
+                iteration: 1,
+            })
+        );
+        state.goal.as_mut().unwrap().status = "paused".into();
+        assert!(state.resume_goal());
+        assert_eq!(state.goal.as_ref().unwrap().status, "running");
+        state.clear_goal();
+        assert!(state.goal.is_none());
+        assert!(!state.resume_goal());
+    }
+    #[test]
+    fn deserialization_defaults_new_fields_for_older_saved_states() {
+        let json =
+            r#"{"queue":["item"],"queue_paused":false,"error":null,"tokens":42,"workflows":[]}"#;
+        let state: TaskState = serde_json::from_str(json).expect("deserialize legacy task state");
+        assert_eq!(state.tokens, 42);
+        assert!(state.goal.is_none());
+        assert!(state.pending_recovery.is_none());
+        assert!(state.file_changes.is_empty());
+    }
+    #[test]
+    fn file_changes_metrics_and_recording() {
+        let mut state = TaskState::default();
+        let changes = TurnFileChanges {
+            items: vec![
+                FileChangeItem {
+                    path: "crates/pi-desktop/src/main.rs".into(),
+                    additions: Some(12),
+                    deletions: Some(4),
+                },
+                FileChangeItem {
+                    path: "Cargo.toml".into(),
+                    additions: Some(2),
+                    deletions: Some(0),
+                },
+            ],
+        };
+        assert_eq!(changes.files_count(), 2);
+        assert_eq!(changes.total_additions(), Some(14));
+        assert_eq!(changes.total_deletions(), Some(4));
+        state.file_changes.insert("msg-1".into(), changes);
+        assert!(state.get_file_changes("msg-1").is_some());
+        assert_eq!(state.get_file_changes("msg-1").unwrap().files_count(), 2);
     }
 }
 

@@ -20,5 +20,6 @@ for name in ("index.html", "vite.config.ts", "src/main.tsx"):
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source / name, destination)
 shutil.copyfile(source.parent / "fixtures/multi-agent-running.json", target / "src/fixture.json")
+shutil.copyfile(source.parent / "fixtures/multi-agent.json", target / "src/completed.json")
 print(f"Staged {target}")
 print("From the reference checkout: node_modules/.bin/vite --config .native-parity/vite.config.ts --host 127.0.0.1")

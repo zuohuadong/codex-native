@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 mod desktop_state;
 mod execution;
+mod file_summary;
 mod i18n;
 mod installer;
 mod interactions;
@@ -19,6 +20,7 @@ mod task_state;
 mod theme;
 mod transcript_scroll;
 mod workbench;
+mod workflow_pane;
 mod workflow_timeline;
 mod workflow_view;
 use i18n::{I18nText, Language};
@@ -39,6 +41,12 @@ pub struct ConversationItem {
     pub title: String,
     pub is_active: bool,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MessageFeedback {
+    Like,
+    Dislike,
+}
+
 pub struct PiDesktopApp {
     workspace_dir: PathBuf,
     session: Session,
@@ -46,6 +54,7 @@ pub struct PiDesktopApp {
     task_states: HashMap<String, task_state::TaskState>,
     review: review::ReviewState,
     review_visible: bool,
+    workflow_pane: Option<workflow_pane::WorkflowPane>,
     terminal_visible: bool,
     terminal_input: Entity<InputState>,
     review_search: Entity<InputState>,
@@ -55,6 +64,11 @@ pub struct PiDesktopApp {
     conversations: Vec<ConversationItem>,
     drafts: HashMap<String, String>,
     expanded_tools: HashSet<String>,
+    hovered_message: Option<String>,
+    hovered_reasoning: Option<String>,
+    hovered_tool: Option<String>,
+    copied_message: Option<String>,
+    message_feedback: HashMap<String, MessageFeedback>,
     agent: Arc<PiAgent>,
     workflow_controls: pi_agent_core::workflow_control::WorkflowControls,
     input_state: Entity<TextareaState>,
@@ -63,12 +77,16 @@ pub struct PiDesktopApp {
     settings_base_input: Entity<InputState>,
     settings_key_input: Entity<InputState>,
     settings_model_input: Entity<InputState>,
+    settings_font_input: Entity<InputState>,
     search_input: Entity<InputState>,
     skill_search_input: Entity<InputState>,
     selected_nav: &'static str,
     show_settings: bool,
     settings_section: settings::Section,
     sidebar_visible: bool,
+    search_open: bool,
+    show_onboard_banner: bool,
+    show_quick_actions: bool,
     language: Language,
     theme_preference: ThemePreference,
     preferences: desktop_state::Preferences,
@@ -97,8 +115,14 @@ pub struct PiDesktopApp {
     scroll_pinned: bool,
     scroll_memory: HashMap<String, (ScrollHandle, bool)>,
     tool_output_scroll: std::cell::RefCell<HashMap<String, ScrollHandle>>,
+    reasoning_scroll_follow:
+        std::cell::RefCell<HashMap<String, std::rc::Rc<std::cell::Cell<bool>>>>,
     workflow_scroll: std::cell::RefCell<HashMap<String, workflow_timeline::Viewport>>,
     workflow_card_focus: std::cell::RefCell<HashMap<String, FocusHandle>>,
+    message_action_focus: std::cell::RefCell<HashMap<String, FocusHandle>>,
+    reasoning_summary_rolls: std::cell::RefCell<HashMap<String, workbench::ReasoningSummaryRoll>>,
+    /// Deadline of the detached hold timer. A later render must not schedule a second wake for the same slot.
+    reasoning_roll_wake: std::cell::RefCell<Option<std::time::Instant>>,
     _subscriptions: Vec<Subscription>,
     automations: Vec<desktop_state::Automation>,
     automation_name: Entity<InputState>,
@@ -108,7 +132,11 @@ pub struct PiDesktopApp {
     automation_editing: Option<String>,
     automation_error: String,
     timer: Option<Task<()>>,
+    /// Wakes the empty draft when the local greeting hour changes.
+    greeting_refresh: std::cell::RefCell<Option<Task<()>>>,
+    copy_reset: std::cell::RefCell<Option<Task<()>>>,
 }
+
 fn mask_api_key(key: &str, language: Language) -> String {
     if key.trim().is_empty() {
         match language {
@@ -121,6 +149,13 @@ fn mask_api_key(key: &str, language: Language) -> String {
     }
 }
 impl PiDesktopApp {
+    fn ui_text(&self, base: f32) -> Pixels {
+        px(desktop_state::ui_text_px(
+            base,
+            self.preferences.ui_font_size_px,
+        ))
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let workspace_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let store = desktop_state::Store::for_workspace(&workspace_dir);
@@ -184,16 +219,40 @@ impl PiDesktopApp {
                 cx,
             )
         });
-        let settings_base_input = cx.new(|cx| InputState::new(window, cx));
-        let settings_key_input = cx.new(|cx| InputState::new(window, cx).masked(true));
+        let settings_base_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("https://api.example.com/v1"));
+        let settings_key_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .placeholder(if language == Language::Chinese {
+                    "输入 API Key"
+                } else {
+                    "Enter API key"
+                })
+        });
         let settings_model_input = cx.new(|cx| InputState::new(window, cx));
+        let settings_font_input = cx.new(|cx| InputState::new(window, cx));
+        settings_font_input.update(cx, |input, cx| {
+            input.set_value(
+                desktop_state::commit_ui_font_size(&preferences.ui_font_size_px.to_string(), 14)
+                    .to_string(),
+                window,
+                cx,
+            )
+        });
         settings_base_input.update(cx, |input, cx| {
             input.set_value(api_base.clone(), window, cx)
         });
         settings_model_input.update(cx, |input, cx| {
             input.set_value(model_identifier.clone(), window, cx)
         });
-        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索 / Search"));
+        let search_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(if language == Language::Chinese {
+                "搜索任务..."
+            } else {
+                "Search tasks..."
+            })
+        });
         let skill_search_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索技能 / Search skills"));
         let mut session_history = saved.sessions;
@@ -275,13 +334,60 @@ impl PiDesktopApp {
                 }
             },
         ));
-        subscriptions
-            .push(cx.subscribe(&search_input, |_, _, _event: &InputEvent, cx| cx.notify()));
+        subscriptions.push(cx.subscribe_in(
+            &search_input,
+            window,
+            |this, _, event: &InputEvent, window, cx| {
+                if let InputEvent::PressEnter { .. } = event {
+                    if this.search_open {
+                        let query = this.search_input.read(cx).value().trim().to_lowercase();
+                        let target_id = this
+                            .conversations
+                            .iter()
+                            .find(|entry| {
+                                if query.is_empty() {
+                                    true
+                                } else {
+                                    entry.title.to_lowercase().contains(&query)
+                                }
+                            })
+                            .map(|entry| entry.id.clone());
+                        if let Some(id) = target_id {
+                            this.activate_conversation(&id, window, cx);
+                            this.search_open = false;
+                            this.focus_composer(window, cx);
+                            cx.notify();
+                        }
+                    }
+                } else {
+                    cx.notify();
+                }
+            },
+        ));
         subscriptions.push(
             cx.subscribe(&skill_search_input, |_, _, _event: &InputEvent, cx| {
                 cx.notify()
             }),
         );
+        subscriptions.push(cx.subscribe_in(
+            &settings_font_input,
+            window,
+            |this, input, event: &InputEvent, window, cx| {
+                if !matches!(event, InputEvent::Blur | InputEvent::PressEnter { .. }) {
+                    return;
+                }
+                let next = desktop_state::commit_ui_font_size(
+                    &input.read(cx).value(),
+                    this.preferences.ui_font_size_px,
+                );
+                this.preferences.ui_font_size_px = next;
+                this.settings_saved = false;
+                input.update(cx, |field, cx| {
+                    field.set_value(next.to_string(), window, cx)
+                });
+                cx.notify();
+            },
+        ));
         for field in [
             &settings_base_input,
             &settings_key_input,
@@ -330,6 +436,7 @@ impl PiDesktopApp {
             task_states: saved.task_states,
             review: review::ReviewState::default(),
             review_visible: false,
+            workflow_pane: None,
             terminal_visible: false,
             terminal_input,
             review_search,
@@ -339,6 +446,11 @@ impl PiDesktopApp {
             conversations,
             drafts: saved.drafts,
             expanded_tools: saved.expanded_tools,
+            hovered_message: None,
+            hovered_reasoning: None,
+            hovered_tool: None,
+            copied_message: None,
+            message_feedback: HashMap::new(),
             agent,
             workflow_controls: Default::default(),
             input_state,
@@ -347,12 +459,16 @@ impl PiDesktopApp {
             settings_base_input,
             settings_key_input,
             settings_model_input,
+            settings_font_input,
             search_input,
             skill_search_input,
             selected_nav: "chat",
             show_settings: false,
             settings_section: settings::section_from_key(preferences.settings_section.as_deref()),
             sidebar_visible: true,
+            search_open: false,
+            show_onboard_banner: true,
+            show_quick_actions: true,
             language,
             theme_preference: preferences.theme,
             preferences,
@@ -381,8 +497,12 @@ impl PiDesktopApp {
             scroll_pinned: true,
             scroll_memory: HashMap::new(),
             tool_output_scroll: std::cell::RefCell::new(HashMap::new()),
+            reasoning_scroll_follow: std::cell::RefCell::new(HashMap::new()),
             workflow_scroll: std::cell::RefCell::new(HashMap::new()),
             workflow_card_focus: std::cell::RefCell::new(HashMap::new()),
+            message_action_focus: std::cell::RefCell::new(HashMap::new()),
+            reasoning_summary_rolls: std::cell::RefCell::new(HashMap::new()),
+            reasoning_roll_wake: std::cell::RefCell::new(None),
             _subscriptions: subscriptions,
             automations: saved.automations,
             automation_name: cx.new(|cx| InputState::new(window, cx)),
@@ -396,6 +516,8 @@ impl PiDesktopApp {
             automation_editing: None,
             automation_error: String::new(),
             timer: None,
+            greeting_refresh: std::cell::RefCell::new(None),
+            copy_reset: std::cell::RefCell::new(None),
         };
         app.restore_task_state();
         app.start_timer(window, cx);
@@ -449,14 +571,14 @@ fn main() {
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
-                    size(px(1180.), px(760.)),
+                    size(px(1200.), px(800.)),
                     cx,
                 ))),
-                window_min_size: Some(size(px(480.), px(480.))),
+                window_min_size: Some(size(px(480.), px(640.))),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Volt".into()),
+                    title: Some("ZCode".into()),
                     appears_transparent: true,
-                    traffic_light_position: Some(point(px(14.), px(16.))),
+                    traffic_light_position: Some(point(px(22.), px(23.))),
                 }),
                 ..Default::default()
             };

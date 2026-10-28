@@ -7,6 +7,7 @@ gpui_kit::actions!(
     [
         NewTask,
         ToggleSidebar,
+        ToggleSearch,
         Settings,
         Dismiss,
         FocusComposer,
@@ -21,13 +22,14 @@ pub fn bind_keys(cx: &mut App) {
         "ctrl"
     };
     cx.bind_keys([
-        KeyBinding::new(&format!("{primary}-n"), NewTask, Some("Volt")),
-        KeyBinding::new(&format!("{primary}-b"), ToggleSidebar, Some("Volt")),
-        KeyBinding::new(&format!("{primary}-,"), Settings, Some("Volt")),
-        KeyBinding::new(&format!("{primary}-l"), FocusComposer, Some("Volt")),
-        KeyBinding::new("escape", Dismiss, Some("Volt")),
-        KeyBinding::new(&format!("{primary}-shift-d"), ToggleReview, Some("Volt")),
-        KeyBinding::new(&format!("{primary}-j"), ToggleTerminal, Some("Volt")),
+        KeyBinding::new(&format!("{primary}-n"), NewTask, Some("ZCode")),
+        KeyBinding::new(&format!("{primary}-b"), ToggleSidebar, Some("ZCode")),
+        KeyBinding::new(&format!("{primary}-k"), ToggleSearch, Some("ZCode")),
+        KeyBinding::new(&format!("{primary}-,"), Settings, Some("ZCode")),
+        KeyBinding::new(&format!("{primary}-l"), FocusComposer, Some("ZCode")),
+        KeyBinding::new("escape", Dismiss, Some("ZCode")),
+        KeyBinding::new(&format!("{primary}-shift-d"), ToggleReview, Some("ZCode")),
+        KeyBinding::new(&format!("{primary}-j"), ToggleTerminal, Some("ZCode")),
     ]);
 }
 impl PiDesktopApp {
@@ -69,6 +71,7 @@ impl PiDesktopApp {
         }
         self.persist_active_session();
         self.remember_scroll();
+        self.workflow_pane = None;
         self.session = Session::new(desktop_state::new_id(), self.t().new_conversation);
         self.scroll = ScrollHandle::new();
         self.scroll_pinned = true;
@@ -102,6 +105,7 @@ impl PiDesktopApp {
         };
         self.persist_active_session();
         self.remember_scroll();
+        self.workflow_pane = None;
         self.session = session;
         (self.scroll, self.scroll_pinned) = self
             .scroll_memory
@@ -124,6 +128,9 @@ impl PiDesktopApp {
     pub fn focus_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_settings = false;
         self.selected_nav = "chat";
+        if panels::review_uses_single_column(window.viewport_size().width) {
+            self.workflow_pane = None;
+        }
         self.input_state
             .update(cx, |input, cx| input.focus(window, cx));
         cx.notify();
@@ -177,6 +184,7 @@ impl PiDesktopApp {
             theme: self.theme_preference,
             reduced_motion: self.preferences.reduced_motion,
             settings_section: Some(self.settings_section.key().into()),
+            ui_font_size_px: self.preferences.ui_font_size_px,
         };
         self.persist_active_session();
         self.settings_error = self.storage_error.clone();
@@ -203,6 +211,17 @@ impl PiDesktopApp {
         let placeholder = self.t().input_placeholder;
         self.input_state.update(cx, |input, cx| {
             input.set_placeholder(placeholder, window, cx)
+        });
+        self.search_input.update(cx, |input, cx| {
+            input.set_placeholder(
+                if language == Language::Chinese {
+                    "搜索任务..."
+                } else {
+                    "Search tasks..."
+                },
+                window,
+                cx,
+            );
         });
         cx.notify();
     }

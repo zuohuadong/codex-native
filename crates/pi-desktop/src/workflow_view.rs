@@ -1,17 +1,18 @@
 use super::*;
 use gpui_kit::assets::IconName as Glyph;
-use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder;
 use pi_agent_core::workflow::{Node, NodeKind, Stage, Status, WorkflowSnapshot};
 
-/// Persisted disclosure belongs to a chat, including while its detail dialog is open.
+/// Persisted disclosure belongs to a chat across transcript and detail surfaces.
 #[derive(Clone, Copy)]
-struct WorkflowScope<'a> {
-    session: &'a str,
-    workflow: &'a str,
+pub(super) struct WorkflowScope<'a> {
+    pub session: &'a str,
+    pub workflow: &'a str,
 }
 impl WorkflowScope<'_> {
-    fn key(self, parts: &[&str]) -> String {
+    pub(super) fn key(self, parts: &[&str]) -> String {
         let mut key = String::from("workflow-v2:");
         // Length prefixes prevent IDs containing separators from colliding.
         for part in [self.session, self.workflow]
@@ -73,7 +74,7 @@ pub(super) fn migrate_disclosures(saved: &mut desktop_state::SavedDesktop) {
     }
 }
 
-fn status_label(status: Status, chinese: bool) -> &'static str {
+pub(super) fn status_label(status: Status, chinese: bool) -> &'static str {
     match (status, chinese) {
         (Status::Waiting, true) => "等待中",
         (Status::Waiting, false) => "Waiting",
@@ -88,7 +89,7 @@ fn status_label(status: Status, chinese: bool) -> &'static str {
     }
 }
 
-fn workflow_status_label(status: Status, chinese: bool) -> &'static str {
+pub(super) fn workflow_status_label(status: Status, chinese: bool) -> &'static str {
     match (status, chinese) {
         (Status::Waiting, true) => "工作流已启动",
         (Status::Waiting, false) => "Workflow started",
@@ -122,7 +123,7 @@ fn digest_key_toggles(
 /// Match the reference `focus-visible:ring-2 ring-ring/40`: a neutral 2px
 /// band outside the card, never the warning colour and never a replacement
 /// surface fill. The ring token itself is already light/dark aware.
-fn digest_focus_ring(ring: Hsla) -> Vec<BoxShadow> {
+pub(super) fn digest_focus_ring(ring: Hsla) -> Vec<BoxShadow> {
     vec![BoxShadow::new(px(0.), px(0.), ring.alpha(ring.a * 0.4))
         .blur_radius(px(0.))
         .spread_radius(px(2.))]
@@ -153,6 +154,69 @@ fn workflow_stage_geometry() -> WorkflowStageGeometry {
     }
 }
 
+fn node_has_detail(node: &Node) -> bool {
+    !node.detail.trim().is_empty()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct StageRoster {
+    pub pinned: Vec<usize>,
+    pub rest: Vec<usize>,
+    pub deck: Vec<usize>,
+    pub failed: usize,
+}
+
+impl StageRoster {
+    fn visible_indexes(&self, expanded: bool) -> Vec<usize> {
+        let mut indexes = self.pinned.clone();
+        if expanded {
+            indexes.extend_from_slice(&self.rest);
+        }
+        indexes
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum NodeSurface {
+    Timeline,
+    Pane,
+    Roll,
+}
+
+pub(super) fn stage_roster(nodes: &[Node]) -> Option<StageRoster> {
+    if nodes.len() <= 6 {
+        return None;
+    }
+    let mut priority: Vec<_> = (0..nodes.len()).collect();
+    priority.sort_by_key(|&index| match nodes[index].status {
+        Status::Running => 0,
+        Status::Failed => 1,
+        _ => 2,
+    });
+    let pinned = priority[..5].to_vec();
+    let rest: Vec<_> = (0..nodes.len())
+        .filter(|index| !pinned.contains(index))
+        .collect();
+    let mut deck = rest.clone();
+    deck.sort_by_key(|&index| match nodes[index].status {
+        Status::Failed => 0,
+        Status::Running => 1,
+        Status::Waiting | Status::Interrupted => 2,
+        Status::Completed => 3,
+    });
+    deck.truncate(3);
+    let failed = rest
+        .iter()
+        .filter(|&&index| nodes[index].status == Status::Failed)
+        .count();
+    Some(StageRoster {
+        pinned,
+        rest,
+        deck,
+        failed,
+    })
+}
+
 impl PiDesktopApp {
     fn workflow_card_focus(&self, key: String, cx: &mut Context<Self>) -> FocusHandle {
         self.workflow_card_focus
@@ -168,7 +232,7 @@ impl PiDesktopApp {
         c: &ThemeColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        self.render_workflow_card(&self.session.id, workflow, c, false, cx)
+        self.render_workflow_card(&self.session.id, workflow, c, cx)
     }
 
     fn render_workflow_card(
@@ -176,7 +240,6 @@ impl PiDesktopApp {
         origin_session_id: &str,
         workflow: &WorkflowSnapshot,
         c: &ThemeColors,
-        expanded_view: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let workflow_id = workflow.id.clone();
@@ -190,12 +253,8 @@ impl PiDesktopApp {
         let collapsed = self.expanded_tools.contains(&collapse_key);
         let card_collapse_key = collapse_key.clone();
         let has_rail = !workflow.stages.is_empty();
-        let card_focus = has_rail.then(|| {
-            self.workflow_card_focus(
-                scope.key(&["card-focus", if expanded_view { "dialog" } else { "chat" }]),
-                cx,
-            )
-        });
+        let card_focus =
+            has_rail.then(|| self.workflow_card_focus(scope.key(&["card-focus", "chat"]), cx));
         let summary = format!(
             "{} · {}",
             workflow_status_label(workflow.status, chinese),
@@ -203,7 +262,7 @@ impl PiDesktopApp {
         );
         let border: Hsla = rgba(c.settings_border).into();
         let mut card = div()
-            .id(scope.key(&["card", if expanded_view { "dialog" } else { "chat" }]))
+            .id(scope.key(&["card", "chat"]))
             .w_full()
             .min_w_0()
             .v_flex()
@@ -309,7 +368,7 @@ impl PiDesktopApp {
                                         })),
                                 )
                             })
-                            .when(!expanded_view, |actions| {
+                            .map(|actions| {
                                 actions.child(
                                     Button::new(format!("workflow-expand-{}", workflow.id))
                                         .ghost()
@@ -322,43 +381,13 @@ impl PiDesktopApp {
                                         )
                                         .child(Icon::new(Glyph::Maximize2).size(px(14.)))
                                         .on_click(cx.listener(move |this, _, window, cx| {
-                                            let app = cx.entity();
-                                            let workflow_id = workflow_id.clone();
-                                            let session_id = session_id.clone();
-                                            let title = this.tr("工作流详情", "Workflow details");
-                                            let detail = cx.new(|cx| WorkflowDetail {
-                                                app: app.downgrade(),
-                                                workflow_id,
-                                                session_id,
-                                                _subscription: cx
-                                                    .observe(&app, |_, _, cx| cx.notify()),
-                                            });
-                                            window.open_dialog(cx, move |dialog, window, _| {
-                                                dialog
-                                                    .title(title)
-                                                    .width(
-                                                        (window.viewport_size().width - px(48.))
-                                                            .min(px(1152.)),
-                                                    )
-                                                    .close_button(true)
-                                                    .keyboard(true)
-                                                    .child(
-                                                        div()
-                                                            .id("workflow-detail-scroll")
-                                                            .w_full()
-                                                            .min_w_0()
-                                                            .max_h(
-                                                                (window.viewport_size().height
-                                                                    - px(160.))
-                                                                .max(px(160.)),
-                                                            )
-                                                            .overflow_y_scroll()
-                                                            .on_scroll_wheel(|_, _, cx| {
-                                                                cx.stop_propagation()
-                                                            })
-                                                            .child(detail.clone()),
-                                                    )
-                                            });
+                                            this.open_workflow_pane(
+                                                &session_id,
+                                                &workflow_id,
+                                                None,
+                                                window,
+                                                cx,
+                                            );
                                             cx.stop_propagation();
                                         })),
                                 )
@@ -405,14 +434,7 @@ impl PiDesktopApp {
         // The digest always keeps its stage rail visible. Collapsing hides only
         // node rows, so progress and deliverables remain available during a run.
         if !workflow.stages.is_empty() {
-            card = card.child(self.workflow_timeline(
-                scope,
-                workflow,
-                !collapsed,
-                expanded_view,
-                c,
-                cx,
-            ));
+            card = card.child(self.workflow_timeline(scope, workflow, !collapsed, c, cx));
         }
         if !workflow.delivery.is_empty() {
             let key = scope.key(&["delivery"]);
@@ -471,13 +493,11 @@ impl PiDesktopApp {
         scope: WorkflowScope<'_>,
         workflow: &WorkflowSnapshot,
         show_nodes: bool,
-        expanded_view: bool,
         c: &ThemeColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        use crate::workflow_timeline::{fold_stations, ledge_width, FADE};
-        // A dialog and its originating chat must not fight over one viewport.
-        let key = scope.key(&["viewport", if expanded_view { "dialog" } else { "chat" }]);
+        use crate::workflow_timeline::{fold_stations, ledge_width, timeline_content_width, FADE};
+        let key = scope.key(&["viewport", "chat"]);
         let viewport = {
             let mut handles = self.workflow_scroll.borrow_mut();
             if !handles.contains_key(&key) {
@@ -517,7 +537,12 @@ impl PiDesktopApp {
         let width = f32::from(scroll.bounds().size.width);
         let offset = -f32::from(scroll.offset().x);
         let maximum = f32::from(scroll.max_offset().x);
-        let fold = fold_stations(workflow.stages.len(), offset, width);
+        let fold = fold_stations(
+            workflow.stages.len(),
+            offset,
+            width,
+            viewport.camera_keep_index(),
+        );
         let entity_id = cx.entity_id();
         let measured_scroll = scroll.clone();
         let wheel_scroll = scroll.clone();
@@ -527,8 +552,20 @@ impl PiDesktopApp {
         let measured_width = width;
         let measured_offset = offset;
         let measured_maximum = maximum;
+        let reduced_motion = self.preferences.reduced_motion;
+        let scrollbar_now = std::time::Instant::now();
+        if let Some(deadline) = viewport.note_offset(offset, scrollbar_now) {
+            self.arm_workflow_scrollbar_hold(viewport.clone(), deadline, cx);
+        }
+        let scrollbar_frame = viewport.presentation(
+            offset,
+            width,
+            width + maximum,
+            self.preferences.reduced_motion,
+            scrollbar_now,
+        );
         let mut timeline = div()
-            .id(scope.key(&["timeline", if expanded_view { "dialog" } else { "chat" }]))
+            .id(scope.key(&["timeline", "chat"]))
             .relative()
             .w_full()
             .min_w_0()
@@ -545,34 +582,46 @@ impl PiDesktopApp {
                     .w_full()
                     .min_w_0()
                     .overflow_x_scroll()
+                    .restrict_scroll_to_axis()
                     .track_scroll(&scroll)
                     .on_scroll_wheel(cx.listener(
                         move |_, event: &gpui::ScrollWheelEvent, window, cx| {
                             let delta = event.delta.pixel_delta(window.line_height());
                             // A horizontal-only timeline consumes the gesture only when
-                            // it currently has horizontal range. With no range, let the
-                            // transcript/detail dialog receive vertical scrolling.
+                            // it currently has horizontal range and the wheel has a
+                            // horizontal component. Vertical scrolling belongs to the
+                            // transcript, matching overflow-x-auto.
                             let horizontal_range = wheel_scroll.max_offset().x > px(0.);
-                            if horizontal_range && (!delta.x.is_zero() || !delta.y.is_zero()) {
+                            if crate::workflow_timeline::timeline_consumes_wheel(
+                                horizontal_range,
+                                f32::from(delta.x),
+                            ) {
                                 wheel_viewport.mark_user_interaction();
                                 cx.stop_propagation();
                                 cx.notify();
                             }
                         },
                     ))
-                    .child(div().h_flex().items_start().gap_6().children(
-                        workflow.stages.iter().enumerate().map(|(index, stage)| {
-                            self.workflow_stage(
-                                scope,
-                                stage,
-                                index + 1 < workflow.stages.len(),
-                                show_nodes,
-                                !fold.left.contains(&index) && !fold.right.contains(&index),
-                                c,
-                                cx,
-                            )
-                        }),
-                    )),
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(timeline_content_width(workflow.stages.len())))
+                            .h_flex()
+                            .items_start()
+                            .gap(px(crate::workflow_timeline::PITCH
+                                - crate::workflow_timeline::STATION_WIDTH))
+                            .children(workflow.stages.iter().enumerate().map(|(index, stage)| {
+                                self.workflow_stage(
+                                    scope,
+                                    stage,
+                                    index + 1 < workflow.stages.len(),
+                                    show_nodes,
+                                    !fold.left.contains(&index) && !fold.right.contains(&index),
+                                    c,
+                                    cx,
+                                )
+                            })),
+                    ),
             )
             // Scroll bounds are populated during prepaint. A size change needs
             // one further frame to recompute folded stations, including resize.
@@ -587,12 +636,26 @@ impl PiDesktopApp {
                         // Subsequent renders of the same running stage preserve
                         // the user's manual scroll position.
                         camera_viewport.reset_drag_if_invalid(current_width, current_maximum);
-                        if let Some(target) =
+                        if let Some((index, target)) =
                             camera_viewport.camera_target(current_width, current_maximum)
                         {
-                            measured_scroll
-                                .set_offset(point(px(-target), measured_scroll.offset().y));
+                            camera_viewport.scroll_to_stage(
+                                index,
+                                target,
+                                reduced_motion,
+                                std::time::Instant::now(),
+                            );
                             cx.notify(entity_id);
+                        }
+                        if camera_viewport.advance_scroll(
+                            current_maximum,
+                            reduced_motion,
+                            std::time::Instant::now(),
+                        ) {
+                            cx.notify(entity_id);
+                        }
+                        if camera_viewport.scroll_is_moving() {
+                            window.request_animation_frame();
                         }
                         // GPUI stores these listeners in the next frame and clears
                         // them on frame reuse; registering during paint is required.
@@ -603,9 +666,59 @@ impl PiDesktopApp {
                             }
                         });
                         let touch_viewport = camera_viewport.clone();
-                        window.on_mouse_event(move |event: &gpui::TouchDragEvent, phase, _, _| {
-                            if phase.capture() && event.phase == gpui::TouchPhase::Started {
-                                touch_viewport.begin_pointer_sequence();
+                        let touch_entity = entity_id;
+                        window.on_mouse_event(move |event: &gpui::TouchDragEvent, phase, _, cx| {
+                            if !phase.capture() {
+                                return;
+                            }
+                            let x = f32::from(event.position.x);
+                            let y = f32::from(event.position.y);
+                            match event.phase {
+                                gpui::TouchPhase::Started => {
+                                    touch_viewport.begin_pointer_sequence();
+                                    if touch_viewport.bar_contains_y(y)
+                                        && touch_viewport
+                                            .bar_local_x(x)
+                                            .is_some_and(|local| touch_viewport.hits_thumb(local))
+                                    {
+                                        touch_viewport.begin_thumb_drag(x);
+                                        cx.notify(touch_entity);
+                                    }
+                                }
+                                gpui::TouchPhase::Moved => {
+                                    if touch_viewport.drag_thumb(x) {
+                                        cx.notify(touch_entity);
+                                    }
+                                }
+                                gpui::TouchPhase::Ended | gpui::TouchPhase::Cancelled => {
+                                    if touch_viewport.finish_thumb_drag() {
+                                        cx.notify(touch_entity);
+                                    }
+                                }
+                            }
+                        });
+                        let drag_viewport = camera_viewport.clone();
+                        let drag_entity = entity_id;
+                        window.on_mouse_event(move |event: &gpui::MouseMoveEvent, phase, _, cx| {
+                            if !phase.capture() {
+                                return;
+                            }
+                            if event.pressed_button.is_none() {
+                                if drag_viewport.finish_thumb_drag() {
+                                    cx.notify(drag_entity);
+                                }
+                                return;
+                            }
+                            if drag_viewport.drag_thumb(f32::from(event.position.x)) {
+                                cx.notify(drag_entity);
+                            }
+                        });
+                        let release_viewport = camera_viewport.clone();
+                        let release_entity = entity_id;
+                        window.on_mouse_event(move |event: &gpui::MouseUpEvent, phase, _, cx| {
+                            if phase.capture() && release_viewport.finish_thumb_drag() {
+                                let _ = event;
+                                cx.notify(release_entity);
                             }
                         });
                         if (current_width - measured_width).abs() > 0.5
@@ -657,10 +770,126 @@ impl PiDesktopApp {
                     .child(self.workflow_ledge(scope, workflow, indexes, left, &viewport, c, cx));
             }
         }
-        if maximum > 0. {
-            timeline = timeline.child(viewport.scrollbar(scope.key(&["timeline-scrollbar"]), c));
+        if scrollbar_frame.thumb.is_some() {
+            timeline =
+                timeline.child(self.workflow_scrollbar(scope, &viewport, &scrollbar_frame, c, cx));
         }
         timeline.into_any_element()
+    }
+
+    fn arm_workflow_scrollbar_hold(
+        &self,
+        viewport: crate::workflow_timeline::Viewport,
+        deadline: std::time::Instant,
+        cx: &mut Context<Self>,
+    ) {
+        if viewport
+            .hold_armed()
+            .is_some_and(|current| current <= deadline)
+        {
+            return;
+        }
+        viewport.arm_hold(deadline);
+        let delay = deadline.saturating_duration_since(std::time::Instant::now());
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            let _ = this.update(cx, |this, cx| {
+                let now = std::time::Instant::now();
+                viewport.disarm_hold(deadline);
+                if let Some(next) = viewport.scrolling_deadline().filter(|next| *next > now) {
+                    this.arm_workflow_scrollbar_hold(viewport.clone(), next, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn workflow_scrollbar(
+        &self,
+        scope: WorkflowScope<'_>,
+        viewport: &crate::workflow_timeline::Viewport,
+        frame: &crate::workflow_timeline::ScrollbarFrame,
+        c: &ThemeColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let hover_viewport = viewport.clone();
+        let press_viewport = viewport.clone();
+        let paint_viewport = viewport.clone();
+        let track = c.settings_border;
+        let thumb_color = c.foreground_subtlest;
+        let thumb = frame.thumb;
+        let thickness = frame.thickness;
+        div()
+            .id(scope.key(&["timeline-scrollbar"]))
+            .absolute()
+            .bottom_0()
+            .left_0()
+            .right_0()
+            .h(px(thickness))
+            .opacity(frame.opacity)
+            .cursor_pointer()
+            .on_hover(cx.listener(move |_, hovered: &bool, _, cx| {
+                if hover_viewport.set_bar_hovered(*hovered) {
+                    cx.notify();
+                }
+            }))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    let x = f32::from(event.position.x);
+                    let Some(local) = press_viewport.bar_local_x(x) else {
+                        return;
+                    };
+                    if press_viewport.hits_thumb(local) {
+                        press_viewport.begin_thumb_drag(x);
+                    } else {
+                        press_viewport.page_from_local(
+                            local,
+                            this.preferences.reduced_motion,
+                            std::time::Instant::now(),
+                        );
+                    }
+                    cx.notify();
+                }),
+            )
+            .on_click(|_: &gpui::ClickEvent, _, cx| {
+                cx.stop_propagation();
+            })
+            .child(
+                gpui::canvas(
+                    {
+                        let origin_viewport = paint_viewport.clone();
+                        move |bounds, _, _| {
+                            origin_viewport.set_bar_bounds(
+                                f32::from(bounds.origin.x),
+                                f32::from(bounds.origin.y),
+                                f32::from(bounds.size.height),
+                            );
+                        }
+                    },
+                    move |bounds, _, window, _| {
+                        let radius = bounds.size.height / 2.;
+                        window.paint_quad(gpui::fill(bounds, rgba(track)).corner_radii(radius));
+                        if let Some(thumb) = thumb {
+                            let thumb_bounds = gpui::Bounds {
+                                origin: point(bounds.origin.x + px(thumb.left), bounds.origin.y),
+                                size: gpui::size(px(thumb.width.max(1.)), bounds.size.height),
+                            };
+                            window.paint_quad(
+                                gpui::fill(thumb_bounds, rgba(thumb_color)).corner_radii(radius),
+                            );
+                        }
+                        if paint_viewport.motion_is_running() {
+                            window.request_animation_frame();
+                        }
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
+            .into_any_element()
     }
 
     fn workflow_ledge(
@@ -674,6 +903,20 @@ impl PiDesktopApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let more = indexes.len().saturating_sub(3);
+        let ledge_width = crate::workflow_timeline::ledge_width(indexes.len());
+        let stub_width = crate::workflow_timeline::ledge_stub_width(
+            indexes,
+            left,
+            -f32::from(viewport.scroll.offset().x),
+            f32::from(viewport.scroll.bounds().size.width),
+        );
+        let has_open_stub = if left {
+            indexes
+                .last()
+                .is_some_and(|index| *index + 1 < workflow.stages.len())
+        } else {
+            indexes.first().is_some_and(|index| *index > 0)
+        };
         let keyboard_viewport = viewport.clone();
         let shown = if left {
             &indexes[more..]
@@ -685,6 +928,8 @@ impl PiDesktopApp {
                 .w(px(26.))
                 .flex_shrink_0()
                 .text_size(px(11.))
+                .font_family(cx.theme().mono_font_family.clone())
+                .text_center()
                 .text_color(rgba(c.foreground_subtlest))
                 .child(format!("+{more}"))
         };
@@ -695,12 +940,12 @@ impl PiDesktopApp {
             .h(px(24.))
             .when(left, |d| d.left_0())
             .when(!left, |d| d.right_0())
-            .w(px(crate::workflow_timeline::ledge_width(indexes.len())))
+            .w(px(ledge_width))
             .px(px(8.))
             .h_flex()
             .items_center()
             .bg(rgb(c.workflow_bg))
-            .on_key_down(cx.listener(move |_, event: &gpui::KeyDownEvent, _, cx| {
+            .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
                 let modifiers = &event.keystroke.modifiers;
                 if modifiers.control || modifiers.alt || modifiers.platform {
                     return;
@@ -712,7 +957,11 @@ impl PiDesktopApp {
                     f32::from(scroll.max_offset().x),
                 ) {
                     keyboard_viewport.mark_user_interaction();
-                    scroll.set_offset(point(px(-target), scroll.offset().y));
+                    keyboard_viewport.scroll_to(
+                        target,
+                        this.preferences.reduced_motion,
+                        std::time::Instant::now(),
+                    );
                     cx.stop_propagation();
                     cx.notify();
                 }
@@ -735,39 +984,69 @@ impl PiDesktopApp {
                         row.child(div().w(px(6.)).h(px(1.)).bg(rgba(c.foreground_subtlest)))
                     })
                     .child(
-                        Button::new(scope.key(&[
-                            "ledge",
-                            if left { "left" } else { "right" },
-                            &stage.id,
-                        ]))
-                        .ghost()
-                        .small()
-                        .p_0()
-                        .w(px(10.))
-                        .min_w(px(10.))
-                        .h(px(10.))
-                        .rounded_full()
-                        .accessibility_label(label.clone())
-                        .tooltip(label)
-                        .child(stage_marker(
-                            stage.status,
-                            c,
-                            self.preferences.reduced_motion,
-                        ))
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            manual_viewport.mark_user_interaction();
-                            let target = crate::workflow_timeline::camera_left(
-                                index,
-                                f32::from(handle.bounds().size.width),
-                                f32::from(handle.max_offset().x),
-                            );
-                            handle.set_offset(point(px(-target), handle.offset().y));
-                            cx.stop_propagation();
-                            cx.notify();
-                        })),
+                        div()
+                            // Keep the reference's 10px lamp pitch while
+                            // expanding only the interactive area to 18px.
+                            .relative()
+                            .w(px(10.))
+                            .h(px(10.))
+                            .child(
+                                Button::new(scope.key(&[
+                                    "ledge",
+                                    if left { "left" } else { "right" },
+                                    &stage.id,
+                                ]))
+                                .ghost()
+                                .small()
+                                .p_0()
+                                .absolute()
+                                .left(px(-4.))
+                                .top(px(-4.))
+                                .w(px(18.))
+                                .min_w(px(18.))
+                                .h(px(18.))
+                                .rounded_full()
+                                .accessibility_label(label.clone())
+                                .tooltip(label)
+                                .child(stage_marker(
+                                    stage.status,
+                                    c,
+                                    self.preferences.reduced_motion,
+                                ))
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        manual_viewport.mark_user_interaction();
+                                        let target = crate::workflow_timeline::camera_left(
+                                            index,
+                                            f32::from(handle.bounds().size.width),
+                                            f32::from(handle.max_offset().x),
+                                        );
+                                        manual_viewport.scroll_to_stage(
+                                            index,
+                                            target,
+                                            this.preferences.reduced_motion,
+                                            std::time::Instant::now(),
+                                        );
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    },
+                                )),
+                            ),
                     )
             }))
             .when(!left && more > 0, |d| d.child(count()))
+            .when(stub_width > 0. && has_open_stub, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top(px(11.5))
+                        .h(px(1.))
+                        .w(px(stub_width))
+                        .when(left, |d| d.left(px(ledge_width - 8.)))
+                        .when(!left, |d| d.right(px(ledge_width - 8.)))
+                        .bg(rgba(c.foreground_subtlest)),
+                )
+            })
             .into_any_element()
     }
 
@@ -802,6 +1081,8 @@ impl PiDesktopApp {
                     .child(
                         div()
                             .h_flex()
+                            .min_w_0()
+                            .flex_shrink_1()
                             .items_center()
                             .when(!show_heading, |header| header.opacity(0.))
                             .child(
@@ -864,93 +1145,307 @@ impl PiDesktopApp {
             .when(show_nodes, |column| {
                 // Header-to-pills is 8px; pills themselves stay on the
                 // reference's tighter 6px rhythm.
-                column.child(
-                    div().w_full().v_flex().gap(px(6.)).children(
-                        stage
-                            .nodes
-                            .iter()
-                            .map(|node| self.workflow_node(scope, stage, node, geometry, c, cx)),
-                    ),
-                )
+                let roster = stage_roster(&stage.nodes);
+                let indexes: Vec<_> = match roster.as_ref() {
+                    Some(roster) => roster.visible_indexes(false),
+                    None => (0..stage.nodes.len()).collect(),
+                };
+                let mut rows =
+                    div()
+                        .w_full()
+                        .v_flex()
+                        .gap(px(6.))
+                        .children(indexes.into_iter().map(|index| {
+                            self.workflow_node(
+                                scope,
+                                stage,
+                                &stage.nodes[index],
+                                NodeSurface::Timeline,
+                                c,
+                                cx,
+                            )
+                        }));
+                if let Some(roster) = roster {
+                    rows = rows.child(self.workflow_more_row(scope, stage, &roster, None, c, cx));
+                }
+                column.child(rows)
             })
             .into_any_element()
     }
 
-    fn workflow_node(
+    pub(super) fn workflow_more_row(
+        &self,
+        scope: WorkflowScope<'_>,
+        stage: &Stage,
+        roster: &StageRoster,
+        door: Option<bool>,
+        c: &ThemeColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let label = if self.language == Language::Chinese {
+            format!("还有 {} 个", roster.rest.len())
+        } else {
+            format!("{} more", roster.rest.len())
+        };
+        let action = match door {
+            None => self.tr("查看阶段名册", "View stage roster"),
+            Some(true) => self.tr("收起其余参与者", "Collapse remaining participants"),
+            Some(false) => self.tr("展开其余参与者", "Expand remaining participants"),
+        };
+        let title = format!("{} · {} · {}", stage.label, label, action);
+        let session_id = scope.session.to_owned();
+        let workflow_id = scope.workflow.to_owned();
+        let stage_id = stage.id.clone();
+        let ring = cx.theme().ring;
+        gpui_kit::base::Button::new(scope.key(&[
+            if door.is_some() {
+                "pane-roster"
+            } else {
+                "roster"
+            },
+            &stage.id,
+        ]))
+        .bg(rgba(if door == Some(true) {
+            c.workflow_node_hover
+        } else {
+            c.workflow_node_bg
+        }))
+        .hover(|style| style.bg(rgba(c.workflow_node_hover)))
+        .active(|style| style.bg(rgba(c.workflow_node_hover)))
+        .cursor_pointer()
+        .w_full()
+        .h(px(32.))
+        .pl(px(8.))
+        .pr(px(10.))
+        .rounded(px(16.))
+        .focus_visible(move |style| style.shadow(digest_focus_ring(ring)))
+        .when_some(door, |button, expanded| button.aria_expanded(expanded))
+        .accessibility_label(title.clone())
+        .tooltip(move |window, cx| Tooltip::new(title.clone()).build(window, cx))
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .h_flex()
+                .items_center()
+                .gap(px(8.))
+                .child(div().h_flex().items_center().flex_shrink_0().children(
+                    roster.deck.iter().enumerate().map(|(index, &node)| {
+                        div()
+                            .flex_shrink_0()
+                            .when(index > 0, |face| face.ml(px(-5.)))
+                            .rounded(px(7.))
+                            .shadow(vec![BoxShadow::new(px(0.), px(0.), rgb(c.root_bg).into())
+                                .spread_radius(px(1.5))])
+                            .child(role_badge(
+                                &stage.nodes[node],
+                                c,
+                                self.preferences.reduced_motion,
+                            ))
+                    }),
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(12.))
+                        .text_color(if door == Some(true) {
+                            rgb(c.text_primary)
+                        } else {
+                            rgba(c.foreground_subtle)
+                        })
+                        .child(label),
+                )
+                .when(door == Some(false), |row| {
+                    row.child(
+                        div()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .child(crate::workflow_pane::roster_tally(
+                                stage,
+                                &roster.rest,
+                                c,
+                                self.language,
+                            )),
+                    )
+                })
+                .when(door.is_none() && roster.failed > 0, |row| {
+                    row.child(
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .gap(px(3.))
+                            .text_size(px(10.))
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_color(rgb(c.workflow_error))
+                            .child(Icon::new(Glyph::CircleX).size(px(10.)))
+                            .child(roster.failed.to_string()),
+                    )
+                })
+                .child(
+                    Icon::new(match door {
+                        None => Glyph::ArrowUpRight,
+                        Some(true) => Glyph::ChevronUp,
+                        Some(false) => Glyph::ChevronDown,
+                    })
+                    .size(px(14.))
+                    .flex_shrink_0()
+                    .text_color(rgba(c.foreground_subtlest)),
+                ),
+        )
+        .on_click(cx.listener(move |this, _, window, cx| {
+            if door.is_some() {
+                if let Some(pane) = this
+                    .workflow_pane
+                    .as_mut()
+                    .filter(|pane| pane.session_id == session_id && pane.workflow_id == workflow_id)
+                {
+                    pane.phases.toggle_listed(&stage_id);
+                }
+            } else {
+                this.open_workflow_pane(&session_id, &workflow_id, Some(&stage_id), window, cx);
+            }
+            cx.stop_propagation();
+            cx.notify();
+        }))
+        .into_any_element()
+    }
+
+    pub(super) fn workflow_node(
         &self,
         scope: WorkflowScope<'_>,
         stage: &Stage,
         node: &Node,
-        geometry: WorkflowStageGeometry,
+        surface: NodeSurface,
         c: &ThemeColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let chinese = self.language == Language::Chinese;
-        let key = scope.key(&["node", &stage.id, &node.id]);
-        let expanded = self.expanded_tools.contains(&key);
+        let compact = surface == NodeSurface::Roll;
+        let geometry = workflow_stage_geometry();
+        let key = scope.key(&[
+            if surface == NodeSurface::Timeline {
+                "node"
+            } else {
+                "pane-node"
+            },
+            &stage.id,
+            &node.id,
+        ]);
+        let openable = node_has_detail(node);
+        let expanded = openable && self.expanded_tools.contains(&key);
+        let detail_key = key.clone();
         let label = format!("{} · {}", node.label, status_label(node.status, chinese));
+        let content = div()
+            .h_flex()
+            .items_center()
+            .gap(px(if compact { 6. } else { 8. }))
+            .w_full()
+            .min_w_0()
+            .child(role_badge(node, c, self.preferences.reduced_motion))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(12.))
+                    .text_color(if node.status == Status::Waiting {
+                        rgba(c.foreground_subtle)
+                    } else {
+                        rgb(c.text_primary)
+                    })
+                    .child(node.label.clone()),
+            )
+            .when(node.status != Status::Waiting, |row| {
+                row.child(node_status_mark(
+                    node.status,
+                    self.preferences.reduced_motion,
+                    c,
+                ))
+            });
+        let pill = if openable {
+            let ring = cx.theme().ring;
+            gpui_kit::base::Button::new(key.clone())
+                .when(!compact, |button| button.bg(rgba(c.workflow_node_bg)))
+                .hover(|style| style.bg(rgba(c.workflow_node_hover)))
+                .active(|style| style.bg(rgba(c.workflow_node_hover)))
+                .cursor_pointer()
+                .w_full()
+                .h(px(if compact {
+                    24.
+                } else {
+                    geometry.agent_pill_height
+                }))
+                .pl(px(if compact {
+                    4.
+                } else {
+                    geometry.agent_pill_padding_left
+                }))
+                .pr(px(if compact {
+                    6.
+                } else {
+                    geometry.agent_pill_padding_right
+                }))
+                .rounded(px(16.))
+                .focus_visible(move |style| {
+                    style
+                        .bg(rgba(c.workflow_node_hover))
+                        .shadow(digest_focus_ring(ring))
+                })
+                .aria_expanded(expanded)
+                .justify_start()
+                .accessibility_label(format!(
+                    "{} · {}",
+                    label,
+                    self.tr("查看详情", "View details")
+                ))
+                .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
+                .child(content)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.toggle_tool_expansion(&key);
+                    cx.stop_propagation();
+                    cx.notify();
+                }))
+                .into_any_element()
+        } else {
+            // Like the reference span, a static pill has no tab stop or hover
+            // action. Pointer clicks may still bubble to the digest collapse.
+            div()
+                .id(key)
+                .w_full()
+                .h(px(if compact {
+                    24.
+                } else {
+                    geometry.agent_pill_height
+                }))
+                .pl(px(if compact {
+                    4.
+                } else {
+                    geometry.agent_pill_padding_left
+                }))
+                .pr(px(if compact {
+                    6.
+                } else {
+                    geometry.agent_pill_padding_right
+                }))
+                .rounded(px(16.))
+                .when(!compact, |row| row.bg(rgba(c.workflow_node_bg)))
+                .h_flex()
+                .items_center()
+                .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
+                .child(content)
+                .into_any_element()
+        };
         div()
             .w_full()
             .min_w_0()
             .v_flex()
             .gap_1()
-            .child(
-                Button::new(key.clone())
-                    .custom(
-                        ButtonCustomVariant::new(cx)
-                            .color(rgba(c.workflow_node_bg).into())
-                            .hover(rgba(c.workflow_node_hover).into())
-                            .active(rgba(c.workflow_node_hover).into()),
-                    )
-                    .small()
-                    .w_full()
-                    .h(px(geometry.agent_pill_height))
-                    .pl(px(geometry.agent_pill_padding_left))
-                    .pr(px(geometry.agent_pill_padding_right))
-                    .rounded(px(16.))
-                    .focus(|style| style.bg(rgba(c.workflow_node_hover)))
-                    .justify_start()
-                    .accessibility_label(label.clone())
-                    .tooltip(label)
-                    .child(
-                        div()
-                            .h_flex()
-                            .items_center()
-                            .gap_2()
-                            .w_full()
-                            .min_w_0()
-                            .child(role_badge(node, c, self.preferences.reduced_motion))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(12.))
-                                    .text_color(if node.status == Status::Waiting {
-                                        rgba(c.foreground_subtle)
-                                    } else {
-                                        rgb(c.text_primary)
-                                    })
-                                    .child(node.label.clone()),
-                            )
-                            .when(node.status != Status::Waiting, |row| {
-                                row.child(node_status_mark(
-                                    node.status,
-                                    self.preferences.reduced_motion,
-                                    c,
-                                ))
-                            }),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.toggle_tool_expansion(&key);
-                        cx.stop_propagation();
-                        cx.notify();
-                    })),
-            )
+            .child(pill)
             .when(expanded, |row| {
                 row.child(
                     div()
-                        .id(scope.key(&["node-detail-scroll", &stage.id, &node.id]))
+                        .id(format!("{detail_key}-detail-scroll"))
                         .w_full()
                         .p_2()
                         .min_w_0()
@@ -960,12 +1455,8 @@ impl PiDesktopApp {
                         .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                         .text_size(px(12.))
                         .child(gpui_kit::base::SelectableText::new(
-                            scope.key(&["node-detail", &stage.id, &node.id]),
-                            if node.detail.is_empty() {
-                                status_label(node.status, chinese).to_string()
-                            } else {
-                                node.detail.clone()
-                            },
+                            format!("{detail_key}-detail"),
+                            node.detail.clone(),
                         )),
                 )
             })
@@ -1086,7 +1577,7 @@ impl PiDesktopApp {
     }
 }
 
-fn stage_marker(status: Status, c: &ThemeColors, reduced_motion: bool) -> AnyElement {
+pub(super) fn stage_marker(status: Status, c: &ThemeColors, reduced_motion: bool) -> AnyElement {
     let color = match status {
         Status::Running => c.workflow_active,
         Status::Completed => c.accent_green,
@@ -1109,19 +1600,29 @@ fn stage_marker(status: Status, c: &ThemeColors, reduced_motion: bool) -> AnyEle
                 .h_flex()
                 .items_center()
                 .justify_center()
-                .when(status == Status::Running, |ring| {
-                    ring.bg(rgba((color << 8) | 0x33))
-                })
-                .when(status == Status::Failed, |ring| {
-                    ring.bg(rgba((color << 8) | 0x4d))
-                })
                 .child({
                     let dot = div()
                         .w(px(10.))
                         .h(px(10.))
                         .rounded_full()
                         .when(hollow, |dot| dot.border(px(1.5)).border_color(rgb(color)))
-                        .when(!hollow, |dot| dot.bg(rgb(color)));
+                        .when(!hollow, |dot| dot.bg(rgb(color)))
+                        .when(status == Status::Running, |dot| {
+                            dot.shadow(vec![BoxShadow::new(
+                                px(0.),
+                                px(0.),
+                                rgba((color << 8) | 0x33).into(),
+                            )
+                            .spread_radius(px(3.))])
+                        })
+                        .when(status == Status::Failed, |dot| {
+                            dot.shadow(vec![BoxShadow::new(
+                                px(0.),
+                                px(0.),
+                                rgba((color << 8) | 0x4d).into(),
+                            )
+                            .spread_radius(px(2.))])
+                        });
                     if status == Status::Running && !reduced_motion {
                         dot.with_animation(
                             "workflow-stage-running",
@@ -1142,6 +1643,12 @@ fn stage_marker(status: Status, c: &ThemeColors, reduced_motion: bool) -> AnyEle
                                     BoxShadow::new(
                                         px(0.),
                                         px(0.),
+                                        rgba((color << 8) | 0x33).into(),
+                                    )
+                                    .spread_radius(px(3.)),
+                                    BoxShadow::new(
+                                        px(0.),
+                                        px(0.),
                                         rgba((color << 8) | alpha).into(),
                                     )
                                     .spread_radius(px(3.0 + 5.0 * wave)),
@@ -1157,7 +1664,7 @@ fn stage_marker(status: Status, c: &ThemeColors, reduced_motion: bool) -> AnyEle
         .into_any_element()
 }
 
-fn role_badge(node: &Node, c: &ThemeColors, reduced_motion: bool) -> AnyElement {
+pub(super) fn role_badge(node: &Node, c: &ThemeColors, reduced_motion: bool) -> AnyElement {
     let badge = div()
         .w(px(20.))
         .h(px(20.))
@@ -1403,43 +1910,6 @@ fn face_canvas(status: Status, progress: f32) -> impl IntoElement {
     .h(px(20.))
 }
 
-/// Observe the owning chat so an open detail view follows snapshots and disclosure changes.
-struct WorkflowDetail {
-    app: WeakEntity<PiDesktopApp>,
-    workflow_id: String,
-    session_id: String,
-    _subscription: Subscription,
-}
-
-impl Render for WorkflowDetail {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = if Theme::global(cx).is_dark() {
-            ThemeColors::dark()
-        } else {
-            ThemeColors::light()
-        };
-        self.app
-            .update(cx, |app, cx| {
-                let workflow = app.task_states.get(&self.session_id).and_then(|state| {
-                    state
-                        .workflows
-                        .iter()
-                        .find(|workflow| workflow.id == self.workflow_id)
-                });
-                match workflow {
-                    Some(workflow) => {
-                        app.render_workflow_card(&self.session_id, workflow, &colors, true, cx)
-                    }
-                    None => div()
-                        .p_3()
-                        .child(app.tr("此工作流已不可用", "This workflow is no longer available"))
-                        .into_any_element(),
-                }
-            })
-            .unwrap_or_else(|_| div().into_any_element())
-    }
-}
-
 fn avatar_slot(index: Option<i32>, name: &str) -> usize {
     match index {
         Some(index) => index.rem_euclid(9) as usize,
@@ -1453,6 +1923,8 @@ fn avatar_slot(index: Option<i32>, name: &str) -> usize {
 
 #[cfg(test)]
 mod visual_identity_tests {
+    use pi_agent_core::workflow::{Node, NodeKind, Status};
+
     use super::{
         avatar_slot, digest_focus_ring, digest_key_toggles, digest_pointer_toggles,
         workflow_stage_geometry, WorkflowScope,
@@ -1508,6 +1980,7 @@ mod visual_identity_tests {
             vec!["delivery"],
             vec!["changes"],
             vec!["node", "stage", "agent"],
+            vec!["roster", "stage"],
         ] {
             assert_ne!(a.key(&parts), b.key(&parts));
         }
@@ -1527,6 +2000,78 @@ mod visual_identity_tests {
         assert_eq!(avatar_slot(None, "A"), 2);
         assert_eq!(avatar_slot(None, "😀"), 1);
         assert_eq!(avatar_slot(None, ""), 0);
+    }
+
+    #[test]
+    fn static_nodes_are_inert_and_large_rosters_keep_five_pinned_rows() {
+        let workflow: super::WorkflowSnapshot = serde_json::from_str(include_str!(
+            "../../../scripts/visual_parity/fixtures/multi-agent.json"
+        ))
+        .unwrap();
+        assert!(super::node_has_detail(&workflow.stages[0].nodes[0]));
+        assert!(!super::node_has_detail(&workflow.stages[0].nodes[1]));
+        let mut whitespace = workflow.stages[0].nodes[0].clone();
+        whitespace.detail = " \n\t ".into();
+        assert!(!super::node_has_detail(&whitespace));
+
+        let mut nodes = Vec::new();
+        for (index, status) in [
+            Status::Failed,
+            Status::Running,
+            Status::Completed,
+            Status::Waiting,
+            Status::Completed,
+            Status::Completed,
+            Status::Completed,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            nodes.push(Node {
+                id: format!("node-{index}"),
+                label: format!("node {index}"),
+                kind: NodeKind::Agent,
+                avatar_index: Some(index as i32),
+                status,
+                detail: String::new(),
+            });
+        }
+        let roster = super::stage_roster(&nodes).expect("seven nodes use the roster");
+        assert_eq!(roster.pinned, vec![1, 0, 2, 3, 4]);
+        assert_eq!(roster.rest, vec![5, 6]);
+        assert_eq!(roster.deck, vec![5, 6]);
+        assert_eq!(roster.failed, 0);
+        assert_eq!(roster.visible_indexes(false), vec![1, 0, 2, 3, 4]);
+        assert_eq!(roster.visible_indexes(true), vec![1, 0, 2, 3, 4, 5, 6]);
+        assert!(super::stage_roster(&[]).is_none());
+        assert!(super::stage_roster(&nodes[..6]).is_none());
+    }
+
+    #[test]
+    fn roster_pins_running_before_failures_and_counts_hidden_failures() {
+        let mut nodes: Vec<_> = (0..9)
+            .map(|index| Node {
+                id: format!("node-{index}"),
+                label: "worker".into(),
+                kind: NodeKind::Agent,
+                avatar_index: None,
+                status: Status::Completed,
+                detail: String::new(),
+            })
+            .collect();
+        nodes[0].status = Status::Waiting;
+        for node in &mut nodes[2..8] {
+            node.status = Status::Failed;
+        }
+        nodes[8].status = Status::Running;
+        let roster = super::stage_roster(&nodes).unwrap();
+        assert_eq!(roster.pinned, vec![8, 2, 3, 4, 5]);
+        assert_eq!(roster.rest, vec![0, 1, 6, 7]);
+        assert_eq!(roster.deck, vec![6, 7, 0]);
+        assert_eq!(roster.failed, 2);
+        let mut all = roster.visible_indexes(true);
+        all.sort_unstable();
+        assert_eq!(all, (0..nodes.len()).collect::<Vec<_>>());
     }
 
     #[test]

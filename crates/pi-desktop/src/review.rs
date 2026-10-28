@@ -25,6 +25,28 @@ pub struct ReviewSnapshot {
     pub diff: String,
 }
 
+pub fn workspace_relative_path(workspace: &Path, file: &str) -> Option<String> {
+    use std::path::Component;
+    let path = Path::new(file);
+    let path = if path.is_absolute() {
+        path.strip_prefix(workspace).ok()?
+    } else {
+        path
+    };
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_str()?),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                parts.pop()?;
+            }
+            _ => return None,
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
 async fn git(workspace: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let output = tokio::time::timeout(
         Duration::from_secs(15),
@@ -72,9 +94,11 @@ pub async fn snapshot(
         .filter(|name| !name.is_empty())
         .map(|name| String::from_utf8_lossy(name).into_owned())
         .collect();
-    let selected = selected
-        .filter(|path| files.contains(path))
-        .or_else(|| files.first().cloned());
+    let selected = match selected {
+        Some(path) if files.contains(&path) => Some(path),
+        Some(_) => None,
+        None => files.first().cloned(),
+    };
     let diff = if let Some(path) = &selected {
         if mode == ReviewMode::Untracked {
             let full = workspace.join(path);
@@ -211,6 +235,66 @@ mod tests {
         assert!(snapshot(directory.path(), ReviewMode::Unstaged, None)
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn explicit_missing_selection_does_not_fall_back_to_another_file() {
+        let directory = tempfile::tempdir().unwrap();
+        git(directory.path(), &["init", "-q"]).await.unwrap();
+        git(
+            directory.path(),
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "fixture",
+            ],
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(directory.path().join("actual.txt"), "changed\n")
+            .await
+            .unwrap();
+        git(directory.path(), &["add", "actual.txt"]).await.unwrap();
+        let snapshot = snapshot(
+            directory.path(),
+            ReviewMode::Staged,
+            Some("missing.txt".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(snapshot.files, vec!["actual.txt"]);
+        assert!(snapshot.selected.is_none());
+        assert!(snapshot.diff.is_empty());
+    }
+
+    #[test]
+    fn file_targets_are_repository_relative_and_cannot_escape_the_workspace() {
+        let workspace = Path::new("/workspace");
+        for file in [
+            "src/file.rs",
+            "./src/file.rs",
+            "/workspace/src/file.rs",
+            "src/../src/file.rs",
+        ] {
+            assert_eq!(
+                workspace_relative_path(workspace, file).as_deref(),
+                Some("src/file.rs")
+            );
+        }
+        for file in [
+            "",
+            ".",
+            "../file.rs",
+            "/elsewhere/file.rs",
+            "src/../../file.rs",
+        ] {
+            assert!(workspace_relative_path(workspace, file).is_none());
+        }
     }
     #[test]
     fn binary_and_large_previews_are_explicit() {

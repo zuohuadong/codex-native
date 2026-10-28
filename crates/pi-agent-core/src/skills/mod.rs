@@ -307,7 +307,6 @@ impl SkillRegistry {
         reg
     }
 
-
     pub fn register(&mut self, skill: Skill) {
         self.skills.push(skill);
     }

@@ -8,6 +8,8 @@ Run `python3 scripts/visual_parity/zcode-components/prepare.py /tmp/codex-native
 from the native repository, then start Vite using the printed command from the
 reference checkout (its dependencies must already be installed). Open port 5188
 with `?theme=light` or `?theme=dark`.
+Use `state=completed` for the unchanged `multi-agent.json` fixture and `width=788`
+to match a measured native card width (the default remains 960px).
 
 The native `multi-agent-running.json` fixture is adapted into timeline display
 data. This does not exercise the reference runtime or its graph projection.
