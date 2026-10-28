@@ -48,7 +48,25 @@ pub enum MessageFeedback {
     Dislike,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArtifactPaneState {
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    pub content: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ArtifactViewMode {
+    #[default]
+    Preview,
+    Code,
+}
+
 pub struct PiDesktopApp {
+    pub artifact_pane: Option<ArtifactPaneState>,
+    pub artifact_visible: bool,
+    pub artifact_view_mode: ArtifactViewMode,
     workspace_dir: PathBuf,
     session: Session,
     session_history: HashMap<String, Session>,
@@ -452,6 +470,9 @@ impl PiDesktopApp {
             hovered_tool: None,
             copied_message: None,
             message_feedback: HashMap::new(),
+            artifact_pane: None,
+            artifact_visible: false,
+            artifact_view_mode: ArtifactViewMode::Preview,
             agent,
             workflow_controls: Default::default(),
             input_state,

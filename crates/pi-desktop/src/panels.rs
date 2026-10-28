@@ -1,6 +1,7 @@
 use super::*;
 use crate::workbench::{action, heading, icon_button};
 use gpui_kit::assets::IconName as Glyph;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::prelude::FluentBuilder;
 
 pub(super) const REVIEW_SIDE_PANE_WIDTH: Pixels = px(380.);
@@ -784,6 +785,248 @@ impl PiDesktopApp {
                             )),
                     ),
             )
+            .into_any_element()
+    }
+
+    pub fn artifact_pane_view(&self, colors: &ThemeColors, cx: &mut Context<Self>) -> AnyElement {
+        let Some(pane) = &self.artifact_pane else {
+            return div().into_any_element();
+        };
+
+        let title = pane.title.clone();
+        let kind = pane.kind.clone();
+        let content = pane.content.clone();
+        let view_mode = self.artifact_view_mode;
+        let is_web = matches!(
+            kind.to_lowercase().as_str(),
+            "html" | "html5" | "canvas" | "svg" | "web"
+        );
+
+        let header = div()
+            .h_flex()
+            .items_center()
+            .justify_between()
+            .h(px(48.))
+            .px_3()
+            .border_b_1()
+            .border_color(rgba(colors.card_border))
+            .bg(rgb(colors.root_bg))
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .px(px(6.))
+                            .py(px(1.))
+                            .rounded(px(4.))
+                            .bg(rgba(colors.hover))
+                            .text_size(self.ui_text(10.))
+                            .font_semibold()
+                            .text_color(rgb(colors.link))
+                            .child(kind.to_uppercase()),
+                    )
+                    .child(
+                        div()
+                            .text_size(self.ui_text(13.))
+                            .font_semibold()
+                            .text_color(rgb(colors.text_primary))
+                            .child(title.clone()),
+                    ),
+            )
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Button::new("artifact-toggle-mode")
+                            .h(px(26.))
+                            .rounded(px(6.))
+                            .px_2()
+                            .ghost()
+                            .child(
+                                div()
+                                    .text_size(self.ui_text(11.))
+                                    .child(if view_mode == ArtifactViewMode::Preview {
+                                        self.tr("源码", "Source")
+                                    } else {
+                                        self.tr("预览", "Preview")
+                                    }),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.artifact_view_mode = match this.artifact_view_mode {
+                                    ArtifactViewMode::Preview => ArtifactViewMode::Code,
+                                    ArtifactViewMode::Code => ArtifactViewMode::Preview,
+                                };
+                                cx.notify();
+                            })),
+                    )
+                    .when(is_web, |actions| {
+                        let content_c = content.clone();
+                        let title_c = title.clone();
+                        actions.child(
+                            Button::new("artifact-open-web-win")
+                                .h(px(26.))
+                                .rounded(px(6.))
+                                .px_2()
+                                .ghost()
+                                .child(
+                                    div()
+                                        .text_size(self.ui_text(11.))
+                                        .child(self.tr("Web视窗", "Web Window")),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let temp_dir = std::env::temp_dir();
+                                    let file_path = temp_dir.join("volt_artifact_web.html");
+                                    if std::fs::write(&file_path, &content_c).is_ok() {
+                                        #[cfg(target_os = "macos")]
+                                        let _ = std::process::Command::new("open").arg(&file_path).spawn();
+                                        #[cfg(target_os = "windows")]
+                                        let _ = std::process::Command::new("cmd").args(["/c", "start", file_path.to_str().unwrap()]).spawn();
+                                        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                                        let _ = std::process::Command::new("xdg-open").arg(&file_path).spawn();
+                                        this.status_message = format!("已在独立 Web 视窗中打开【{}】", title_c);
+                                        cx.notify();
+                                    }
+                                })),
+                        )
+                    })
+                    .child(
+                        Button::new("artifact-close-btn")
+                            .h(px(26.))
+                            .rounded(px(6.))
+                            .px_2()
+                            .ghost()
+                            .child(
+                                div()
+                                    .text_size(self.ui_text(12.))
+                                    .child("✕"),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.artifact_visible = false;
+                                cx.notify();
+                            })),
+                    ),
+            );
+
+        let body = match view_mode {
+            ArtifactViewMode::Preview => {
+                let content_c = content.clone();
+                let title_c = title.clone();
+                div()
+                    .flex_1()
+                    .p_3()
+                    .v_flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .w_full()
+                            .p_3()
+                            .rounded(px(10.))
+                            .bg(rgb(colors.card_bg))
+                            .border_1()
+                            .border_color(rgba(colors.card_border))
+                            .v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_size(self.ui_text(13.))
+                                            .font_semibold()
+                                            .text_color(rgb(colors.text_primary))
+                                            .child(self.tr("Web / HTML5 沙箱", "Web / HTML5 Sandbox")),
+                                    )
+                                    .child(
+                                        div()
+                                            .px(px(6.))
+                                            .py(px(2.))
+                                            .rounded(px(4.))
+                                            .bg(rgba(colors.accent_green & 0x00ffffff | 0x20000000))
+                                            .text_size(self.ui_text(11.))
+                                            .text_color(rgb(colors.accent_green))
+                                            .child(self.tr("沙箱就绪", "Ready")),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(self.ui_text(12.))
+                                    .text_color(rgba(colors.foreground_subtle))
+                                    .child(format!(
+                                        "{}，大小 {} 字节。点击下方按钮即可在独立 GPU 硬件加速 Web 视窗中执行 HTML5、WebGL 与 Canvas。",
+                                        kind.to_uppercase(),
+                                        content.len()
+                                    )),
+                            )
+                            .child(
+                                Button::new("artifact-launch-btn")
+                                    .h(px(30.))
+                                    .rounded(px(6.))
+                                    .secondary()
+                                    .child(
+                                        div()
+                                            .text_size(self.ui_text(12.))
+                                            .font_medium()
+                                            .child(self.tr("🌐 启动独立 Web 视窗运行", "🌐 Launch in Independent Web Window")),
+                                    )
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        let temp_dir = std::env::temp_dir();
+                                        let file_path = temp_dir.join("volt_artifact_web.html");
+                                        if std::fs::write(&file_path, &content_c).is_ok() {
+                                            #[cfg(target_os = "macos")]
+                                            let _ = std::process::Command::new("open").arg(&file_path).spawn();
+                                            #[cfg(target_os = "windows")]
+                                            let _ = std::process::Command::new("cmd").args(["/c", "start", file_path.to_str().unwrap()]).spawn();
+                                            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                                            let _ = std::process::Command::new("xdg-open").arg(&file_path).spawn();
+                                            this.status_message = format!("已在独立 Web 视窗中启动【{}】", title_c);
+                                            cx.notify();
+                                        }
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .p_3()
+                            .rounded(px(8.))
+                            .bg(rgba(colors.inline_code_bg))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .text_size(self.ui_text(11.))
+                                    .font_family(".AppleSystemUIFontMonospaced")
+                                    .text_color(rgba(colors.foreground_subtle))
+                                    .child(content),
+                            ),
+                    )
+            }
+            ArtifactViewMode::Code => div()
+                .flex_1()
+                .p_3()
+                .bg(rgba(colors.inline_code_bg))
+                .overflow_hidden()
+                .child(
+                    div()
+                        .text_size(self.ui_text(12.))
+                        .font_family(".AppleSystemUIFontMonospaced")
+                        .text_color(rgb(colors.text_primary))
+                        .child(content),
+                ),
+        };
+
+        div()
+            .w_full()
+            .h_full()
+            .v_flex()
+            .bg(rgb(colors.root_bg))
+            .child(header)
+            .child(body)
             .into_any_element()
     }
 }

@@ -56,7 +56,72 @@ impl PiDesktopApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let prompt = format!("已执行操作【{}】(ID: {})", action.label, action.id);
+        // 1. If copy_text is present, copy directly to system clipboard
+        if let Some(text) = &action.copy_text {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
+            self.status_message = format!("已复制【{}】到剪贴板", action.label);
+            cx.notify();
+            return;
+        }
+
+        // 2. If url is present, open in default browser
+        if let Some(url) = &action.url {
+            #[cfg(target_os = "macos")]
+            let _ = std::process::Command::new("open").arg(url).spawn();
+            #[cfg(target_os = "windows")]
+            let _ = std::process::Command::new("cmd").args(["/c", "start", url]).spawn();
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+            return;
+        }
+
+        // 3. Artifact sidebar or web window actions
+        if let Some(payload) = &action.payload {
+            if let Some(act) = payload.get("action").and_then(|v| v.as_str()) {
+                if act == "open_sidebar" {
+                    let id = payload.get("id").and_then(|v| v.as_str()).unwrap_or(&action.id);
+                    let title = payload.get("title").and_then(|v| v.as_str()).unwrap_or(&action.label);
+                    let kind = payload.get("kind").and_then(|v| v.as_str()).unwrap_or("code");
+                    let content = payload.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                    self.artifact_pane = Some(crate::ArtifactPaneState {
+                        id: id.to_string(),
+                        title: title.to_string(),
+                        kind: kind.to_string(),
+                        content: content.to_string(),
+                    });
+                    self.artifact_visible = true;
+                    self.status_message = format!("已在侧边栏打开产物【{}】", title);
+                    cx.notify();
+                    return;
+                } else if act == "open_web_window" {
+                    let content = payload.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                    let title = payload.get("title").and_then(|v| v.as_str()).unwrap_or("Artifact");
+                    let temp_dir = std::env::temp_dir();
+                    let file_path = temp_dir.join(format!("volt_web_{}.html", action.id));
+                    if std::fs::write(&file_path, content).is_ok() {
+                        #[cfg(target_os = "macos")]
+                        let _ = std::process::Command::new("open").arg(&file_path).spawn();
+                        #[cfg(target_os = "windows")]
+                        let _ = std::process::Command::new("cmd").args(["/c", "start", file_path.to_str().unwrap()]).spawn();
+                        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                        let _ = std::process::Command::new("xdg-open").arg(&file_path).spawn();
+                        self.status_message = format!("已在独立 Web 视窗中运行【{}】", title);
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
+        }
+
+        // 3. Prompt dispatch to Agent
+        let prompt = if let Some(p) = &action.prompt {
+            p.clone()
+        } else if let Some(payload) = &action.payload {
+            format!("已执行操作【{}】(参数: {})", action.label, payload)
+        } else {
+            format!("已执行操作【{}】(ID: {})", action.label, action.id)
+        };
+
         self.input_state.update(cx, |input, cx| {
             input.set_value(prompt, window, cx);
         });

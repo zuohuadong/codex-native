@@ -807,6 +807,25 @@ impl Render for PiDesktopApp {
                                             .child(self.review_view(&colors, cx)),
                                     )
                                 },
+                            )
+                            .when(
+                                self.artifact_visible
+                                    && self.artifact_pane.is_some()
+                                    && !workflow_pane
+                                    && !self.review_visible
+                                    && !narrow_review
+                                    && !self.show_settings,
+                                |root| {
+                                    root.child(
+                                        div()
+                                            .w(crate::panels::REVIEW_SIDE_PANE_WIDTH)
+                                            .flex_shrink_0()
+                                            .h_full()
+                                            .border_l_1()
+                                            .border_color(rgba(colors.card_border))
+                                            .child(self.artifact_pane_view(&colors, cx)),
+                                    )
+                                },
                             ),
                     )
                     .when(self.terminal_visible && !self.show_settings, |root| {
