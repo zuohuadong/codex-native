@@ -33,6 +33,11 @@ pub struct ThemeColors {
     /// Reference `--color-menu-hover`, distinct from the alpha `selected` surface.
     pub menu_hover: u32,
     pub muted_foreground: u32,
+    /// Zai remote navigation text; opaque, unlike the subtle foreground alpha.
+    pub remote_foreground_muted: u32,
+    /// Shared shortcut badges (`--color-tooltip-tag` and its foreground).
+    pub shortcut_bg: u32,
+    pub shortcut_foreground: u32,
     /// RGBA foreground tokens from the Zai theme CSS cascade.
     pub foreground_subtle: u32,
     pub foreground_subtlest: u32,
@@ -72,6 +77,9 @@ impl ThemeColors {
             selected: 0x0d0d0d0d,
             menu_hover: 0xf0f0f0,
             muted_foreground: 0x26262699,
+            remote_foreground_muted: 0x595959,
+            shortcut_bg: 0xe6e6e6,
+            shortcut_foreground: 0x5c5c5c,
             foreground_subtle: 0x26262699,
             foreground_subtlest: 0x26262666,
             workflow_bg: 0xfdfdfd,
@@ -109,6 +117,9 @@ impl ThemeColors {
             selected: 0xffffff1a,
             menu_hover: 0x363636,
             muted_foreground: 0xd4d4d499,
+            remote_foreground_muted: 0xb3b3b3,
+            shortcut_bg: 0x363636,
+            shortcut_foreground: 0xadadad,
             foreground_subtle: 0xd4d4d499,
             foreground_subtlest: 0xd4d4d44d,
             workflow_bg: 0x252525,
@@ -130,6 +141,20 @@ impl ThemeColors {
 #[cfg(test)]
 mod tests {
     use super::ThemeColors;
+
+    #[test]
+    fn shortcut_badges_follow_the_zai_tooltip_tag_palette() {
+        assert_eq!(ThemeColors::light().shortcut_bg, 0xe6e6e6);
+        assert_eq!(ThemeColors::light().shortcut_foreground, 0x5c5c5c);
+        assert_eq!(ThemeColors::dark().shortcut_bg, 0x363636);
+        assert_eq!(ThemeColors::dark().shortcut_foreground, 0xadadad);
+    }
+
+    #[test]
+    fn settings_back_text_uses_opaque_remote_foreground_tokens() {
+        assert_eq!(ThemeColors::light().remote_foreground_muted, 0x595959);
+        assert_eq!(ThemeColors::dark().remote_foreground_muted, 0xb3b3b3);
+    }
 
     #[test]
     fn destructive_tokens_follow_the_zai_cascade() {

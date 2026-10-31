@@ -91,8 +91,10 @@ pub struct PiDesktopApp {
     agent: Arc<PiAgent>,
     workflow_controls: pi_agent_core::workflow_control::WorkflowControls,
     input_state: Entity<TextareaState>,
-    settings_language: Entity<SelectState<Vec<SharedString>>>,
-    settings_theme: Entity<SelectState<Vec<SharedString>>>,
+    settings_general_language: Entity<SelectState<Vec<SharedString>>>,
+    settings_appearance_theme: Entity<SelectState<Vec<SharedString>>>,
+    settings_footer_language: Entity<SelectState<Vec<SharedString>>>,
+    settings_footer_theme: Entity<SelectState<Vec<SharedString>>>,
     settings_base_input: Entity<InputState>,
     settings_key_input: Entity<InputState>,
     settings_model_input: Entity<InputState>,
@@ -218,7 +220,7 @@ impl PiDesktopApp {
             cx.new(|cx| InputState::new(window, cx).placeholder("输入命令 / Enter command"));
         let review_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索文件 / Search files"));
-        let settings_language = cx.new(|cx| {
+        let settings_general_language = cx.new(|cx| {
             SelectState::new(
                 vec![SharedString::from("中文"), SharedString::from("English")],
                 Some(IndexPath::new(if language == Language::Chinese {
@@ -230,7 +232,27 @@ impl PiDesktopApp {
                 cx,
             )
         });
-        let settings_theme = cx.new(|cx| {
+        let settings_appearance_theme = cx.new(|cx| {
+            SelectState::new(
+                settings::theme_labels(language),
+                Some(IndexPath::new(settings::theme_index(preferences.theme))),
+                window,
+                cx,
+            )
+        });
+        let settings_footer_language = cx.new(|cx| {
+            SelectState::new(
+                vec![SharedString::from("中文"), SharedString::from("English")],
+                Some(IndexPath::new(if language == Language::Chinese {
+                    0
+                } else {
+                    1
+                })),
+                window,
+                cx,
+            )
+        });
+        let settings_footer_theme = cx.new(|cx| {
             SelectState::new(
                 settings::theme_labels(language),
                 Some(IndexPath::new(settings::theme_index(preferences.theme))),
@@ -320,7 +342,7 @@ impl PiDesktopApp {
                 }),
             ];
         subscriptions.push(cx.subscribe_in(
-            &settings_language,
+            &settings_general_language,
             window,
             |this, _, event: &SelectEvent<Vec<SharedString>>, window, cx| {
                 if let SelectEvent::Confirm(Some(value)) = event {
@@ -336,20 +358,38 @@ impl PiDesktopApp {
                 }
             },
         ));
-        subscriptions.push(cx.subscribe(
-            &settings_theme,
-            |this, _, event: &SelectEvent<Vec<SharedString>>, cx| {
+        subscriptions.push(cx.subscribe_in(
+            &settings_footer_language,
+            window,
+            |this, _, event: &SelectEvent<Vec<SharedString>>, window, cx| {
                 if let SelectEvent::Confirm(Some(value)) = event {
-                    let labels = settings::theme_labels(this.language);
-                    if let Some(index) = labels.iter().position(|label| label == value) {
-                        this.theme_preference = [
-                            ThemePreference::Light,
-                            ThemePreference::Dark,
-                            ThemePreference::Auto,
-                        ][index];
-                        this.settings_saved = false;
-                        cx.notify();
-                    }
+                    this.change_language(
+                        if value.as_ref() == "中文" {
+                            Language::Chinese
+                        } else {
+                            Language::English
+                        },
+                        window,
+                        cx,
+                    );
+                }
+            },
+        ));
+        subscriptions.push(cx.subscribe_in(
+            &settings_appearance_theme,
+            window,
+            |this, _, event: &SelectEvent<Vec<SharedString>>, window, cx| {
+                if let SelectEvent::Confirm(Some(value)) = event {
+                    this.change_theme(value, window, cx);
+                }
+            },
+        ));
+        subscriptions.push(cx.subscribe_in(
+            &settings_footer_theme,
+            window,
+            |this, _, event: &SelectEvent<Vec<SharedString>>, window, cx| {
+                if let SelectEvent::Confirm(Some(value)) = event {
+                    this.change_theme(value, window, cx);
                 }
             },
         ));
@@ -476,8 +516,10 @@ impl PiDesktopApp {
             agent,
             workflow_controls: Default::default(),
             input_state,
-            settings_language,
-            settings_theme,
+            settings_general_language,
+            settings_appearance_theme,
+            settings_footer_language,
+            settings_footer_theme,
             settings_base_input,
             settings_key_input,
             settings_model_input,

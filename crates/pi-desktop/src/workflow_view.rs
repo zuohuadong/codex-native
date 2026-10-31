@@ -5,6 +5,11 @@ use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder;
 use pi_agent_core::workflow::{Node, NodeKind, Stage, Status, WorkflowSnapshot};
 
+pub(crate) mod chevron;
+pub(crate) mod entrance;
+mod roster_more;
+use entrance::{pill_delay, WorkflowEntrance};
+
 /// Persisted disclosure belongs to a chat across transcript and detail surfaces.
 #[derive(Clone, Copy)]
 pub(super) struct WorkflowScope<'a> {
@@ -564,6 +569,7 @@ impl PiDesktopApp {
             self.preferences.reduced_motion,
             scrollbar_now,
         );
+        let mut pill_ordinal: usize = 0;
         let mut timeline = div()
             .id(scope.key(&["timeline", "chat"]))
             .relative()
@@ -611,12 +617,16 @@ impl PiDesktopApp {
                             .gap(px(crate::workflow_timeline::PITCH
                                 - crate::workflow_timeline::STATION_WIDTH))
                             .children(workflow.stages.iter().enumerate().map(|(index, stage)| {
+                                let first_ordinal = pill_ordinal;
+                                pill_ordinal =
+                                    pill_ordinal.saturating_add(stage.nodes.len().min(6));
                                 self.workflow_stage(
                                     scope,
                                     stage,
                                     index + 1 < workflow.stages.len(),
                                     show_nodes,
                                     !fold.left.contains(&index) && !fold.right.contains(&index),
+                                    first_ordinal,
                                     c,
                                     cx,
                                 )
@@ -1057,6 +1067,7 @@ impl PiDesktopApp {
         has_next: bool,
         show_nodes: bool,
         show_heading: bool,
+        first_ordinal: usize,
         c: &ThemeColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1150,23 +1161,27 @@ impl PiDesktopApp {
                     Some(roster) => roster.visible_indexes(false),
                     None => (0..stage.nodes.len()).collect(),
                 };
-                let mut rows =
-                    div()
-                        .w_full()
-                        .v_flex()
-                        .gap(px(6.))
-                        .children(indexes.into_iter().map(|index| {
-                            self.workflow_node(
-                                scope,
-                                stage,
-                                &stage.nodes[index],
-                                NodeSurface::Timeline,
-                                c,
-                                cx,
-                            )
-                        }));
+                let mut rows = div().w_full().v_flex().gap(px(6.)).children(
+                    indexes.into_iter().enumerate().map(|(position, index)| {
+                        let node = &stage.nodes[index];
+                        WorkflowEntrance::arrive(
+                            scope.key(&["node-enter", &stage.id, &node.id]),
+                            self.workflow_node(scope, stage, node, NodeSurface::Timeline, c, cx),
+                            pill_delay(first_ordinal.saturating_add(position)),
+                            self.preferences.reduced_motion,
+                        )
+                    }),
+                );
                 if let Some(roster) = roster {
-                    rows = rows.child(self.workflow_more_row(scope, stage, &roster, None, c, cx));
+                    rows = rows.child(self.workflow_more_row(
+                        scope,
+                        stage,
+                        &roster,
+                        None,
+                        pill_delay(first_ordinal.saturating_add(roster.pinned.len())),
+                        c,
+                        cx,
+                    ));
                 }
                 column.child(rows)
             })
@@ -1179,6 +1194,7 @@ impl PiDesktopApp {
         stage: &Stage,
         roster: &StageRoster,
         door: Option<bool>,
+        enter_delay: std::time::Duration,
         c: &ThemeColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1197,117 +1213,104 @@ impl PiDesktopApp {
         let workflow_id = scope.workflow.to_owned();
         let stage_id = stage.id.clone();
         let ring = cx.theme().ring;
-        gpui_kit::base::Button::new(scope.key(&[
+        let key = scope.key(&[
             if door.is_some() {
                 "pane-roster"
             } else {
                 "roster"
             },
             &stage.id,
-        ]))
-        .bg(rgba(if door == Some(true) {
-            c.workflow_node_hover
-        } else {
-            c.workflow_node_bg
-        }))
-        .hover(|style| style.bg(rgba(c.workflow_node_hover)))
-        .active(|style| style.bg(rgba(c.workflow_node_hover)))
-        .cursor_pointer()
-        .w_full()
-        .h(px(32.))
-        .pl(px(8.))
-        .pr(px(10.))
-        .rounded(px(16.))
-        .focus_visible(move |style| style.shadow(digest_focus_ring(ring)))
-        .when_some(door, |button, expanded| button.aria_expanded(expanded))
-        .accessibility_label(title.clone())
-        .tooltip(move |window, cx| Tooltip::new(title.clone()).build(window, cx))
-        .child(
-            div()
-                .w_full()
-                .min_w_0()
-                .h_flex()
-                .items_center()
-                .gap(px(8.))
-                .child(div().h_flex().items_center().flex_shrink_0().children(
-                    roster.deck.iter().enumerate().map(|(index, &node)| {
-                        div()
-                            .flex_shrink_0()
-                            .when(index > 0, |face| face.ml(px(-5.)))
-                            .rounded(px(7.))
-                            .shadow(vec![BoxShadow::new(px(0.), px(0.), rgb(c.root_bg).into())
-                                .spread_radius(px(1.5))])
-                            .child(role_badge(
-                                &stage.nodes[node],
-                                c,
-                                self.preferences.reduced_motion,
-                            ))
-                    }),
-                ))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(12.))
-                        .text_color(if door == Some(true) {
-                            rgb(c.text_primary)
-                        } else {
-                            rgba(c.foreground_subtle)
-                        })
-                        .child(label),
-                )
-                .when(door == Some(false), |row| {
-                    row.child(
-                        div()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .child(crate::workflow_pane::roster_tally(
-                                stage,
-                                &roster.rest,
-                                c,
-                                self.language,
-                            )),
-                    )
-                })
-                .when(door.is_none() && roster.failed > 0, |row| {
-                    row.child(
-                        div()
-                            .h_flex()
-                            .items_center()
-                            .gap(px(3.))
-                            .text_size(px(10.))
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_color(rgb(c.workflow_error))
-                            .child(Icon::new(Glyph::CircleX).size(px(10.)))
-                            .child(roster.failed.to_string()),
-                    )
-                })
-                .child(
-                    Icon::new(match door {
-                        None => Glyph::ArrowUpRight,
-                        Some(true) => Glyph::ChevronUp,
-                        Some(false) => Glyph::ChevronDown,
-                    })
-                    .size(px(14.))
-                    .flex_shrink_0()
-                    .text_color(rgba(c.foreground_subtlest)),
-                ),
-        )
-        .on_click(cx.listener(move |this, _, window, cx| {
-            if door.is_some() {
-                if let Some(pane) = this
-                    .workflow_pane
-                    .as_mut()
-                    .filter(|pane| pane.session_id == session_id && pane.workflow_id == workflow_id)
-                {
-                    pane.phases.toggle_listed(&stage_id);
+        ]);
+        let button = gpui_kit::base::Button::new(key.clone())
+            .active(|style| style.bg(rgba(c.workflow_node_hover)))
+            .cursor_pointer()
+            .w_full()
+            .h(px(32.))
+            .pl(px(8.))
+            .pr(px(10.))
+            .rounded(px(16.))
+            .focus_visible(move |style| style.shadow(digest_focus_ring(ring)))
+            .when_some(door, |button, expanded| button.aria_expanded(expanded))
+            .accessibility_label(title.clone())
+            .tooltip(move |window, cx| Tooltip::new(title.clone()).build(window, cx))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if door.is_some() {
+                    if let Some(pane) = this.workflow_pane.as_mut().filter(|pane| {
+                        pane.session_id == session_id && pane.workflow_id == workflow_id
+                    }) {
+                        pane.phases.toggle_listed(&stage_id);
+                    }
+                } else {
+                    this.open_workflow_pane(&session_id, &workflow_id, Some(&stage_id), window, cx);
                 }
-            } else {
-                this.open_workflow_pane(&session_id, &workflow_id, Some(&stage_id), window, cx);
-            }
-            cx.stop_propagation();
-            cx.notify();
-        }))
+                cx.stop_propagation();
+                cx.notify();
+            }));
+        let faces = roster
+            .deck
+            .iter()
+            .map(|&node| {
+                div()
+                    .flex_shrink_0()
+                    .rounded(px(7.))
+                    .shadow(vec![BoxShadow::new(px(0.), px(0.), rgb(c.root_bg).into())
+                        .spread_radius(px(1.5))])
+                    .child(role_badge(
+                        &stage.nodes[node],
+                        c,
+                        self.preferences.reduced_motion,
+                    ))
+                    .into_any_element()
+            })
+            .collect();
+        let row = div()
+            .min_w_0()
+            .h_flex()
+            .items_center()
+            .gap(px(8.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(12.))
+                    .child(label),
+            )
+            .when(door == Some(false), |row| {
+                row.child(
+                    div()
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .child(crate::workflow_pane::roster_tally(
+                            stage,
+                            &roster.rest,
+                            c,
+                            self.language,
+                        )),
+                )
+            })
+            .when(door.is_none() && roster.failed > 0, |row| {
+                row.child(
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .gap(px(3.))
+                        .text_size(px(10.))
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_color(rgb(c.workflow_error))
+                        .child(Icon::new(Glyph::CircleX).size(px(10.)))
+                        .child(roster.failed.to_string()),
+                )
+            });
+        roster_more::RosterMore {
+            id: key.into(),
+            button,
+            faces,
+            row,
+            colors: *c,
+            door,
+            enter_delay,
+            reduced_motion: self.preferences.reduced_motion,
+        }
         .into_any_element()
     }
 
@@ -1319,7 +1322,7 @@ impl PiDesktopApp {
         surface: NodeSurface,
         c: &ThemeColors,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Div {
         let chinese = self.language == Language::Chinese;
         let compact = surface == NodeSurface::Roll;
         let geometry = workflow_stage_geometry();
@@ -1460,7 +1463,6 @@ impl PiDesktopApp {
                         )),
                 )
             })
-            .into_any_element()
     }
 
     fn workflow_changes(

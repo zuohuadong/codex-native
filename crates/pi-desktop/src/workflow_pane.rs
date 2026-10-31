@@ -1,12 +1,101 @@
 use super::*;
 use crate::workbench::icon_button;
 use crate::workflow_view::{
-    digest_focus_ring, role_badge, stage_marker, stage_roster, status_label, workflow_status_label,
-    NodeSurface, WorkflowScope,
+    chevron::{ChevronKind, WorkflowChevron},
+    digest_focus_ring,
+    entrance::{roll_delay, WorkflowEntrance},
+    role_badge, stage_marker, stage_roster, status_label, workflow_status_label, NodeSurface,
+    WorkflowScope,
 };
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::prelude::FluentBuilder;
 use pi_agent_core::workflow::{Stage, Status};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
+
+mod roster_meter;
+
+// Browser-owned smooth-scroll timing is approximated like the digest camera.
+const LANDING_TRAVEL: Duration = Duration::from_millis(300);
+
+#[derive(Default)]
+struct PhaseLanding {
+    stage_id: Option<String>,
+    motion: Option<LandingMotion>,
+}
+
+struct LandingMotion {
+    from: f32,
+    to: f32,
+    started: Instant,
+}
+
+impl PhaseLanding {
+    fn request(&mut self, stage_id: &str) {
+        self.stage_id = Some(stage_id.to_owned());
+        self.motion = None;
+    }
+
+    fn cancel(&mut self) {
+        self.stage_id = None;
+        self.motion = None;
+    }
+
+    fn on_scroll(&mut self, delta: gpui::Point<Pixels>) {
+        if delta.x != px(0.) || delta.y != px(0.) {
+            self.cancel();
+        }
+    }
+
+    fn sync(&mut self, stages: &[Stage]) {
+        if self
+            .stage_id
+            .as_ref()
+            .is_some_and(|id| !stages.iter().any(|stage| &stage.id == id))
+        {
+            self.cancel();
+        }
+    }
+
+    fn advance(
+        &mut self,
+        current: f32,
+        target: Option<f32>,
+        maximum: f32,
+        reduced_motion: bool,
+        now: Instant,
+    ) -> Option<f32> {
+        self.stage_id.as_ref()?;
+        if !maximum.is_finite() || !current.is_finite() {
+            return None;
+        }
+        let maximum = maximum.max(0.);
+        if self.motion.is_none() {
+            let target = target.filter(|target| target.is_finite())?;
+            self.motion = Some(LandingMotion {
+                from: current.clamp(0., maximum),
+                to: target.clamp(0., maximum),
+                started: now,
+            });
+        }
+        let motion = self
+            .motion
+            .as_ref()
+            .expect("landing motion was initialized");
+        let elapsed = now.saturating_duration_since(motion.started);
+        if reduced_motion || elapsed >= LANDING_TRAVEL || (motion.to - motion.from).abs() < 0.5 {
+            let top = motion.to.clamp(0., maximum);
+            self.cancel();
+            return Some(top);
+        }
+        let ease = gpui_kit::base::animation::cubic_bezier(0.22, 0.61, 0.36, 1.);
+        let progress = ease(elapsed.as_secs_f32() / LANDING_TRAVEL.as_secs_f32());
+        Some((motion.from + (motion.to - motion.from) * progress).clamp(0., maximum))
+    }
+}
 
 const ATTENTION_ORDER: [Status; 5] = [
     Status::Failed,
@@ -63,6 +152,7 @@ pub(super) struct WorkflowPane {
     pub workflow_id: String,
     pub phases: PhaseState,
     scroll: ScrollHandle,
+    landing: Rc<RefCell<PhaseLanding>>,
     focus: FocusHandle,
     return_focus: Option<FocusHandle>,
 }
@@ -88,6 +178,27 @@ fn status_color(status: Status, c: &ThemeColors) -> Rgba {
         Status::Failed => rgb(c.workflow_error),
         Status::Waiting | Status::Interrupted => rgba(c.foreground_subtlest),
     }
+}
+
+fn roll_frame() -> Div {
+    div()
+        .w_full()
+        .min_w_0()
+        .grid()
+        .grid_cols(2)
+        .gap_x(px(8.))
+        .pt(px(2.))
+}
+
+fn roll_heading_frame(first: bool) -> Div {
+    div()
+        .col_span(2)
+        .mt(px(if first { 0. } else { 4. }))
+        .h_flex()
+        .items_center()
+        .h(px(22.))
+        .gap(px(5.))
+        .pl(px(4.))
 }
 
 fn tally_item(status: Status, count: usize, c: &ThemeColors, language: Language) -> AnyElement {
@@ -149,46 +260,6 @@ pub(super) fn roster_tally(
         .into_any_element()
 }
 
-fn roster_meter(stage: &Stage, c: &ThemeColors) -> AnyElement {
-    div()
-        .w(px(44.))
-        .h(px(3.))
-        .rounded(px(2.))
-        .overflow_hidden()
-        .h_flex()
-        .gap(px(1.))
-        .children(
-            [
-                Status::Completed,
-                Status::Failed,
-                Status::Running,
-                Status::Waiting,
-                Status::Interrupted,
-            ]
-            .into_iter()
-            .filter_map(|status| {
-                let count = stage
-                    .nodes
-                    .iter()
-                    .filter(|node| node.status == status)
-                    .count();
-                (count > 0).then(|| {
-                    div()
-                        .min_w(px(2.))
-                        .flex_basis(px(0.))
-                        .flex_grow(count as f32)
-                        .h_full()
-                        .bg(if status == Status::Waiting {
-                            rgba(c.card_border)
-                        } else {
-                            status_color(status, c)
-                        })
-                })
-            }),
-        )
-        .into_any_element()
-}
-
 impl PiDesktopApp {
     pub(super) fn workflow_pane_active(&self) -> bool {
         !self.show_settings
@@ -208,6 +279,9 @@ impl PiDesktopApp {
                     .find(|workflow| workflow.id == pane.workflow_id)
             }) {
                 pane.phases.sync(&workflow.stages);
+                pane.landing.borrow_mut().sync(&workflow.stages);
+            } else {
+                pane.landing.borrow_mut().cancel();
             }
         }
     }
@@ -246,15 +320,15 @@ impl PiDesktopApp {
                 workflow_id: workflow_id.to_owned(),
                 phases: PhaseState::default(),
                 scroll: ScrollHandle::new(),
+                landing: Rc::default(),
                 focus: cx.focus_handle(),
                 return_focus,
             });
         }
         let pane = self.workflow_pane.as_mut().expect("pane was initialized");
         pane.phases.sync(&workflow.stages);
-        if let Some(index) = stage_id.and_then(|id| pane.phases.land(&workflow.stages, id)) {
-            // GPUI resolves the child after layout, including a newly opened body.
-            pane.scroll.scroll_to_top_of_item(index);
+        if let Some(id) = stage_id.filter(|id| pane.phases.land(&workflow.stages, id).is_some()) {
+            pane.landing.borrow_mut().request(id);
         }
         pane.focus.focus(window, cx);
         self.review_visible = false;
@@ -284,8 +358,10 @@ impl PiDesktopApp {
         });
         let focus = pane.focus.clone();
         let keyboard_scroll = pane.scroll.clone();
+        let keyboard_landing = pane.landing.clone();
         let mut view = div()
             .id("workflow-run-pane")
+            .relative()
             .track_focus(&pane.focus)
             .on_key_down(move |event, window, cx| {
                 let stroke = &event.keystroke;
@@ -303,6 +379,7 @@ impl PiDesktopApp {
                     f32::from(keyboard_scroll.max_offset().y),
                     f32::from(keyboard_scroll.bounds().size.height),
                 ) {
+                    keyboard_landing.borrow_mut().cancel();
                     keyboard_scroll.set_offset(point(px(0.), px(-top)));
                     window.prevent_default();
                     window.refresh();
@@ -356,6 +433,17 @@ impl PiDesktopApp {
         };
         let stop_state = self.workflow_controls.stopping(&workflow.id);
         let workflow_id = workflow.id.clone();
+        let measured_scroll = pane.scroll.clone();
+        let measured_landing = pane.landing.clone();
+        let wheel_landing = pane.landing.clone();
+        let pointer_landing = pane.landing.clone();
+        let stage_ids: Vec<_> = workflow
+            .stages
+            .iter()
+            .map(|stage| stage.id.clone())
+            .collect();
+        let reduced_motion = self.preferences.reduced_motion;
+        let entity_id = cx.entity_id();
         view = view.child(
             div()
                 .flex_shrink_0()
@@ -436,6 +524,14 @@ impl PiDesktopApp {
                 .w_full()
                 .overflow_y_scroll()
                 .track_scroll(&pane.scroll)
+                .on_scroll_wheel(move |event, _, _| {
+                    wheel_landing
+                        .borrow_mut()
+                        .on_scroll(event.delta.pixel_delta(px(20.)));
+                })
+                .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                    pointer_landing.borrow_mut().cancel();
+                })
                 .v_flex()
                 .pt(px(10.))
                 .pb_3()
@@ -460,6 +556,50 @@ impl PiDesktopApp {
                             )),
                     )
                 }),
+        )
+        .child(
+            // Paint follows the expanded list's layout, so child bounds are fresh.
+            gpui::canvas(
+                |_, _, _| (),
+                move |_, _, window, cx| {
+                    let mut landing = measured_landing.borrow_mut();
+                    let Some(id) = landing.stage_id.as_ref() else {
+                        return;
+                    };
+                    let Some(index) = stage_ids.iter().position(|stage| stage == id) else {
+                        landing.cancel();
+                        return;
+                    };
+                    let now = Instant::now();
+                    let bounds = measured_scroll.bounds();
+                    if bounds.size.height <= px(0.) {
+                        return;
+                    }
+                    let target = measured_scroll
+                        .bounds_for_item(index)
+                        .map(|child| f32::from(child.top() - bounds.top()));
+                    let offset = measured_scroll.offset();
+                    if let Some(top) = landing.advance(
+                        -f32::from(offset.y),
+                        target,
+                        f32::from(measured_scroll.max_offset().y),
+                        reduced_motion,
+                        now,
+                    ) {
+                        if offset.y != px(-top) {
+                            measured_scroll.set_offset(point(offset.x, px(-top)));
+                            cx.notify(entity_id);
+                        }
+                    }
+                    if landing.stage_id.is_some() {
+                        window.request_animation_frame();
+                    }
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
         )
         .into_any_element()
     }
@@ -553,7 +693,13 @@ impl PiDesktopApp {
                             )
                             .when(!open, |row| {
                                 if roster.is_some() {
-                                    row.child(roster_meter(stage, c))
+                                    row.child(roster_meter::RosterMeter {
+                                        id: scope.key(&["pane-meter", &stage.id]).into(),
+                                        counts: roster_meter::counts(stage),
+                                        colors: *c,
+                                        language: self.language,
+                                        reduced_motion: self.preferences.reduced_motion,
+                                    })
                                 } else {
                                     row.child(
                                         div()
@@ -586,15 +732,13 @@ impl PiDesktopApp {
                                         )),
                                 )
                             })
-                            .child(
-                                Icon::new(if open {
-                                    Glyph::ChevronDown
-                                } else {
-                                    Glyph::ChevronRight
-                                })
-                                .size(px(14.))
-                                .text_color(rgba(c.foreground_subtlest)),
-                            ),
+                            .child(WorkflowChevron {
+                                id: scope.key(&["pane-phase-chevron", &stage.id]).into(),
+                                kind: ChevronKind::Phase,
+                                expanded: open,
+                                reduced_motion: self.preferences.reduced_motion,
+                                color: rgba(c.foreground_subtlest),
+                            }),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(pane) = this.workflow_pane.as_mut().filter(|pane| {
@@ -618,13 +762,12 @@ impl PiDesktopApp {
                     .v_flex()
                     .gap(px(6.))
                     .children(indexes.into_iter().map(|index| {
-                        self.workflow_node(
-                            scope,
-                            stage,
-                            &stage.nodes[index],
-                            NodeSurface::Pane,
-                            c,
-                            cx,
+                        let node = &stage.nodes[index];
+                        WorkflowEntrance::arrive(
+                            scope.key(&["pane-node-enter", &stage.id, &node.id]),
+                            self.workflow_node(scope, stage, node, NodeSurface::Pane, c, cx),
+                            Duration::ZERO,
+                            self.preferences.reduced_motion,
                         )
                     }));
                 if let Some(roster) = roster {
@@ -633,18 +776,18 @@ impl PiDesktopApp {
                         stage,
                         &roster,
                         Some(listed),
+                        Duration::ZERO,
                         c,
                         cx,
                     ));
                     if listed {
-                        for (status, indexes) in groups(stage, &roster.rest) {
-                            body = body.child(
-                                div()
-                                    .h_flex()
-                                    .items_center()
-                                    .h(px(22.))
-                                    .gap(px(5.))
-                                    .pl(px(4.))
+                        let mut roll = roll_frame();
+                        let mut ordinal = 0;
+                        for (group_index, (status, indexes)) in
+                            groups(stage, &roster.rest).into_iter().enumerate()
+                        {
+                            roll = roll.child(
+                                roll_heading_frame(group_index == 0)
                                     .font_family(cx.theme().mono_font_family.clone())
                                     .child(tally_item(status, indexes.len(), c, self.language))
                                     .child(
@@ -656,24 +799,40 @@ impl PiDesktopApp {
                                                 self.language == Language::Chinese,
                                             )),
                                     )
-                                    .child(div().flex_1().h(px(1.)).bg(rgba(c.card_border))),
+                                    .child(
+                                        div().ml(px(3.)).flex_1().h(px(1.)).bg(rgba(c.card_border)),
+                                    ),
                             );
-                            body = body.child(div().grid().grid_cols(2).gap_x(px(8.)).children(
-                                indexes.into_iter().map(|index| {
+                            for index in indexes {
+                                let node = &stage.nodes[index];
+                                roll = roll.child(WorkflowEntrance::arrive(
+                                    scope.key(&["pane-roll-enter", &stage.id, &node.id]),
                                     self.workflow_node(
                                         scope,
                                         stage,
-                                        &stage.nodes[index],
+                                        node,
                                         NodeSurface::Roll,
                                         c,
                                         cx,
-                                    )
-                                }),
-                            ));
+                                    ),
+                                    roll_delay(ordinal),
+                                    self.preferences.reduced_motion,
+                                ));
+                                ordinal += 1;
+                            }
                         }
+                        body = body.child(WorkflowEntrance::unfold(
+                            scope.key(&["pane-roll-unfold", &stage.id]),
+                            roll,
+                            self.preferences.reduced_motion,
+                        ));
                     }
                 }
-                section.child(body)
+                section.child(WorkflowEntrance::unfold(
+                    scope.key(&["pane-stage-unfold", &stage.id]),
+                    body,
+                    self.preferences.reduced_motion,
+                ))
             })
             .into_any_element()
     }
@@ -681,8 +840,16 @@ impl PiDesktopApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{groups, stage_roster, PhaseState, Stage, Status};
+    use super::{
+        groups, roll_frame, roll_heading_frame, stage_roster, PhaseLanding, PhaseState, Stage,
+        Status, LANDING_TRAVEL,
+    };
+    use gpui_kit::{
+        point, px, relative, AlignItems, Display, GridPlacement, GridTemplate, GridTemplateMinSize,
+        Styled,
+    };
     use pi_agent_core::workflow::{Node, NodeKind};
+    use std::time::{Duration, Instant};
 
     fn stage(id: &str, status: Status) -> Stage {
         Stage {
@@ -691,6 +858,45 @@ mod tests {
             status,
             nodes: vec![],
             progress: None,
+        }
+    }
+
+    #[test]
+    fn roster_roll_keeps_two_shrinkable_columns_and_reference_spacing() {
+        let mut frame = roll_frame();
+        let style = frame.style();
+        assert_eq!(style.display, Some(Display::Grid));
+        assert_eq!(
+            style.grid_cols,
+            Some(GridTemplate {
+                repeat: 2,
+                min_size: GridTemplateMinSize::Zero,
+            })
+        );
+        assert_eq!(style.size.width, Some(relative(1.).into()));
+        assert_eq!(style.min_size.width, Some(px(0.).into()));
+        assert_eq!(style.gap.width, Some(px(8.).into()));
+        assert_eq!(style.gap.height, None);
+        assert_eq!(style.padding.top, Some(px(2.).into()));
+    }
+
+    #[test]
+    fn roster_group_headings_span_both_columns_with_only_intergroup_margin() {
+        for first in [true, false] {
+            let mut heading = roll_heading_frame(first);
+            let style = heading.style();
+            assert_eq!(
+                style.grid_location.as_ref().unwrap().column,
+                GridPlacement::Span(2)..GridPlacement::Span(2)
+            );
+            assert_eq!(
+                style.margin.top,
+                Some(px(if first { 0. } else { 4. }).into())
+            );
+            assert_eq!(style.size.height, Some(px(22.).into()));
+            assert_eq!(style.align_items, Some(AlignItems::Center));
+            assert_eq!(style.gap.width, Some(px(5.).into()));
+            assert_eq!(style.padding.left, Some(px(4.).into()));
         }
     }
 
@@ -725,6 +931,145 @@ mod tests {
         phases.sync(&stages[..1]);
         assert!(!phases.open.contains("b"));
         assert!(!phases.listed.contains("b"));
+    }
+
+    #[test]
+    fn landing_waits_for_layout_then_finishes_once_without_following_later_updates() {
+        let now = Instant::now();
+        let mut landing = PhaseLanding::default();
+        landing.request("b");
+        assert_eq!(landing.advance(40., None, 600., false, now), None);
+        assert!(landing.motion.is_none());
+        assert_eq!(
+            landing.advance(40., Some(400.), 600., false, now),
+            Some(40.)
+        );
+        let halfway = landing
+            .advance(40., None, 600., false, now + LANDING_TRAVEL / 2)
+            .unwrap();
+        assert!(halfway > 40. && halfway < 400.);
+        assert_eq!(
+            landing.advance(halfway, None, 600., false, now + LANDING_TRAVEL),
+            Some(400.)
+        );
+        assert!(landing.stage_id.is_none());
+        assert!(landing.motion.is_none());
+        assert_eq!(
+            landing.advance(120., Some(450.), 600., false, now + LANDING_TRAVEL),
+            None
+        );
+    }
+
+    #[test]
+    fn repeated_landings_replace_motion_from_the_current_position() {
+        let now = Instant::now();
+        let mut landing = PhaseLanding::default();
+        landing.request("b");
+        landing.advance(0., Some(400.), 600., false, now);
+        let current = landing
+            .advance(0., None, 600., false, now + Duration::from_millis(100))
+            .unwrap();
+        for id in ["b", "a"] {
+            landing.request(id);
+            assert_eq!(landing.stage_id.as_deref(), Some(id));
+            assert_eq!(
+                landing.advance(current, Some(100.), 600., false, now),
+                Some(current)
+            );
+            assert_eq!(
+                landing.advance(current, None, 600., false, now + LANDING_TRAVEL),
+                Some(100.)
+            );
+        }
+    }
+
+    #[test]
+    fn landing_cancellation_clears_pending_and_in_flight_requests() {
+        let now = Instant::now();
+        for started in [false, true] {
+            let mut landing = PhaseLanding::default();
+            landing.request("b");
+            if started {
+                landing.advance(0., Some(400.), 600., false, now);
+            }
+            landing.cancel();
+            assert!(landing.stage_id.is_none());
+            assert!(landing.motion.is_none());
+            assert_eq!(landing.advance(30., Some(400.), 600., false, now), None);
+        }
+    }
+
+    #[test]
+    fn either_scroll_axis_cancels_landing_but_zero_delta_preserves_it() {
+        let now = Instant::now();
+        for started in [false, true] {
+            for (x, y) in [(12., 0.), (0., -12.), (-12., 12.)] {
+                let mut landing = PhaseLanding::default();
+                landing.request("b");
+                if started {
+                    landing.advance(0., Some(400.), 600., false, now);
+                }
+                landing.on_scroll(point(px(0.), px(0.)));
+                assert_eq!(landing.stage_id.as_deref(), Some("b"));
+                assert_eq!(landing.motion.is_some(), started);
+                landing.on_scroll(point(px(x), px(y)));
+                assert!(landing.stage_id.is_none());
+                assert!(landing.motion.is_none());
+                assert_eq!(landing.advance(30., Some(400.), 600., false, now), None);
+            }
+        }
+    }
+
+    #[test]
+    fn reduced_motion_lands_immediately_and_can_settle_an_existing_transition() {
+        let now = Instant::now();
+        for started in [false, true] {
+            let mut landing = PhaseLanding::default();
+            landing.request("b");
+            if started {
+                landing.advance(0., Some(400.), 600., false, now);
+            }
+            assert_eq!(landing.advance(0., Some(400.), 600., true, now), Some(400.));
+            assert!(landing.stage_id.is_none());
+            assert!(landing.motion.is_none());
+        }
+    }
+
+    #[test]
+    fn landing_clamps_every_frame_to_resized_bounds_and_handles_non_scrollable_lists() {
+        let now = Instant::now();
+        let mut landing = PhaseLanding::default();
+        landing.request("b");
+        landing.advance(0., Some(900.), 600., false, now);
+        assert_eq!(
+            landing.advance(0., None, 80., false, now + LANDING_TRAVEL / 2),
+            Some(80.)
+        );
+        assert_eq!(
+            landing.advance(80., None, 80., false, now + LANDING_TRAVEL),
+            Some(80.)
+        );
+        landing.request("a");
+        assert_eq!(landing.advance(0., Some(40.), 0., false, now), Some(0.));
+        assert!(landing.stage_id.is_none());
+    }
+
+    #[test]
+    fn stage_removal_cancels_pending_or_moving_landings_but_snapshot_refresh_does_not() {
+        let now = Instant::now();
+        let stages = vec![stage("a", Status::Running), stage("b", Status::Completed)];
+        for started in [false, true] {
+            let mut landing = PhaseLanding::default();
+            landing.request("b");
+            if started {
+                landing.advance(0., Some(400.), 600., false, now);
+            }
+            landing.sync(&stages);
+            assert_eq!(landing.stage_id.as_deref(), Some("b"));
+            landing.sync(&stages[..1]);
+            assert!(landing.stage_id.is_none());
+            assert!(landing.motion.is_none());
+        }
     }
 
     #[test]

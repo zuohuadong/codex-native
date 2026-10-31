@@ -548,3 +548,368 @@ Risk/orchestration: medium; native single writer with one independent read-only 
 - Verification: `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline` passed with **116 tests**, `cargo check -p pi-desktop --offline`, `cargo build -p pi-desktop --release --offline`, `cargo fmt -p pi-desktop -- --check` and `git diff --check` passed using the Command Line Tools SDK. The final local binary is `/tmp/codex-native-target/release/volt`, SHA256 `99181e7bcbeab3852bf677acb8e9118b159e119a7c3316f1d8c78b1cfc66d909`. These are source/build gates only; they do not promote GUI interaction or pixel acceptance.
 - One independent read-only verifier found a shortcut-driven Review transition that removed the pane without transferring focus. All Review toggle callers now pass the `Window`; toggles and file-review opens close the pane through the shared path and then focus the continuously mounted workbench root. The verifier confirmed that correction with no new code blocker; it did not claim GUI focus acceptance or rerun the owner tests.
 - Remaining boundaries: the snapshot has no branch topology or child transcripts; no branch graph, actor conversation, configuration/resume capability, or remote state was fabricated. Landing uses immediate deferred native positioning; the reference smooth movement/1200ms flash, exact hover/face fan-out/arrival/meter transitions, rendered light/dark, 480px layout, keyboard focus, and matched pixels still need acceptance.
+
+## Settings save button detail follow-up - 2026-10-29
+
+Parent: the existing ZCode visual alignment objective.
+Source: user's attached model-provider settings screenshot and request to refine button styling.
+Reason: the save action inherited a navigation row's left-aligned, full-width inner content and a fixed 132px width.
+Scope/risk/orchestration: low-risk native single writer; settings save button presentation only, without changing persistence, labels, icons, or success/error behavior.
+
+- Replaced the navigation helper with a settings-owned GPUI-Kit primary Button: content-sized width, start-aligned self placement to prevent flex stretching, centered interface-size text, 32px height, 8px radius, 10px horizontal padding, 16px Check icon, and 4px content gap. Colors, hover, pressed and keyboard-focus behavior remain owned by the component; no duplicate hover registration was introduced.
+- Added a builder-style regression test for Chinese/English labels at 12/14/20px, checking height, unspecified width, start alignment and padding. This test does not measure rendered labels, pointer states or pixel parity.
+- Verification: `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline` passed **123 tests**; the matching release build passed. `rustfmt --edition 2021 --check crates/pi-desktop/src/settings.rs` and `git diff --check` passed. Package-wide `cargo fmt -p pi-desktop -- --check` remains blocked by existing formatting differences in `execution.rs`, `generative_ui.rs`, and `panels.rs`; those unrelated files were not reformatted.
+- Status: **PARTIAL**. The current macOS window probe returned `Screen is locked`; no final-build capture or interaction replay was obtained. Still required: unlocked light/dark settings captures at 1200x800 and 480x640, Chinese/English and largest-text layout, hover/pressed/keyboard focus, save feedback, and matched-reference visual review. The local binary is `/tmp/codex-native-target/release/volt`; existing running windows and screenshots are not evidence for this build.
+
+## Settings navigation button follow-up - 2026-10-29
+
+Parent: the settings save button detail follow-up above.
+Source: the user's ongoing ZCode comparison and button-detail feedback.
+Reason: settings navigation reused the workbench action's small text and retained an empty label and gap in compact mode.
+Scope/risk/orchestration: low-risk native single writer; settings navigation presentation and its local theme token only. Save behavior, section persistence and return-focus handling remain unchanged.
+
+- Compared `SettingsSidebarButton` and Back in the pinned ZCode 3.16.2 source at `3c5b227649371507ddc4eb46ac5133afe6db1cab`.
+- Settings-owned content now uses interface-sized 14px/20px text, 16px non-shrinking icons, and an 8px gap only when the visible label exists. Compact targets stay 40x40 with zero padding and centered icons; labels remain available through tooltip and accessibility name.
+- Section icons/text use foreground and selection/hover use the reference surface-hover token (5% light / 10% dark). Back uses ArrowLeft, 6px wide inline padding, the idle surface and opaque remote-muted text, with foreground content on group hover. Its instance-level background now pins the idle surface after the component variant is applied, avoiding gpui-kit’s translucent custom-color fallback. Custom variants retain component activation/focus without registering a second button hover handler.
+- Added Chinese/English, 12/14/20px wide/compact builder-style coverage, light/dark remote-muted token assertions, and a light/dark wide/compact Back-frame regression for the idle surface and geometry. These are source contracts, not rendered label measurements or interaction acceptance.
+- Verification: **126 tests passed**, the matching offline release build passed, `rustfmt --edition 2021 --check` passed for `settings.rs`, `buttons.rs` and `theme.rs`, and `git diff --check` passed. Release binary: `/tmp/codex-native-target/release/volt`, SHA256 `4334c3f1f76292874413e0a4c548d98395e257fc5c404b1ee99d1ceb18315880`. Unrelated formatting-only changes made during checking were removed; `execution.rs`, `generative_ui.rs` and `panels.rs` have no diff.
+- A temporary offscreen-render diagnostic did not produce screenshots or runtime evidence: application test-support resolution hit an optional Fast-backend Cocoa version conflict, and a separate diagnostic build exhausted system-disk space. The diagnostic manifest, lockfile and source were removed; application dependencies and lockfile remain unchanged.
+- The macOS window probe again returned `Screen is locked`. Post-build light/dark and narrow captures, largest-text layout, pointer/keyboard states, save feedback and matched pixels remain **PARTIAL**. No screenshot from an older running binary is attributed to this change.
+
+## Settings heading typography follow-up - 2026-10-29
+
+Parent: the settings navigation button follow-up above and the full ZCode alignment objective.
+Source: the user's ongoing comparison request and active goal continuation.
+Reason: page titles and navigation group labels stayed at fixed sizes after the interface font preference changed; group labels used translucent foreground instead of the reference remote-muted color.
+Scope/risk/orchestration: low-risk native single writer; settings page title and navigation group typography only. Button geometry, handlers, preference persistence, global text scaling and other page content remain unchanged.
+
+- Rechecked the same pinned ZCode commit, `SettingsPage.tsx` and `styles.css`. Title tokens are additive: interface size +10px with a 4/3 line height compact, or +16px with a 1.2 line height wide. Default 14px rendering therefore retains 24px/32px and 30px/36px.
+- Native titles now use those tokens, full available width, a shrinkable minimum width, no fixed height and natural wrapping. Navigation group labels use interface size -2px, 1.5 line height, medium weight and opaque light/dark remote-muted colors; compact navigation still omits them.
+- Builder tests cover all eight section labels in Chinese/English at 12/14/20px in both layout modes, plus light/dark group styles. These assert style contracts, not actual glyph measurement, wrapping bounds or rendered contrast.
+- Verification: **128 tests passed** with `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline -q`; the offline release build, focused `rustfmt --edition 2021 --check` and `git diff --check` passed. Binary: `/tmp/codex-native-target/release/volt`, SHA256 `2d38c6e56819f24a43ae932029ec5b143cba21bb82ca620c5549e4208b38b7d6`.
+- The current macOS probe returned `Screen is locked`; no fresh native screenshots or interaction results were obtained. Whole-product parity remains **PARTIAL**, including maximum-font wrapping, light/dark wide/minimum layouts, focus/pointer states and matched-reference pixels. Remaining fixed-size settings body/caption text is outside this heading-only follow-up and still needs source comparison.
+
+## Settings body typography follow-up - 2026-10-29
+
+Parent: the settings heading typography follow-up above and the full ZCode alignment objective.
+Source: the user's ongoing comparison request and active goal continuation.
+Reason: settings body text still bypassed the interface-size preference in status values, skill rows, footer/provider notes and shortcut keycaps, leaving the page internally inconsistent at larger text sizes.
+Scope/risk/orchestration: low-risk native single writer; settings typography inheritance only. The workbench root remains unchanged, and fixed controls, icons, spacing, persistence and handlers remain unchanged.
+
+- Scoped `self.ui_text(14.)` inheritance to the settings frame. This keeps the main workbench's existing typography contract intact while making settings row labels and descriptions follow the interface preference.
+- Converted settings captions to the reference base-minus-2px token and larger usage values to base-plus-2px. Provider notes, footer labels, status values, skill names/counts/descriptions and shortcut labels/keycaps now follow the same scale. Fixed 20px/24px line heights remain stable.
+- Added builder coverage for the settings frame and caption styles across light/dark themes and 12/14/20px values. These tests verify source style contracts, not rendered glyph metrics or actual line wrapping.
+- Verification: **130 tests passed** with `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline -q`; the offline release build, focused `rustfmt --edition 2021 --check` and `git diff --check` passed. Binary: `/tmp/codex-native-target/release/volt`, SHA256 `917685f9a71a44b5c0f7f924549063400e469111b87ee7363a4e41a10d4c64e2`.
+- The macOS probe again returned `Screen is locked`; fresh light/dark, compact, maximum-size and interaction captures remain unavailable. Whole-product visual parity is **PARTIAL**.
+
+## Settings form control follow-up - 2026-10-29
+
+Parent: the settings body typography follow-up and the full ZCode alignment objective.
+Source: the user's attached model-provider settings comparison and pinned ZCode 3.16.2 source.
+Reason: single-line fields used `Input::h()`, although GPUI-Kit only applies that builder to multiline editors; the key visibility control retained the library's smaller geometry.
+Scope/risk/orchestration: low-risk native single writer; provider input geometry, API-key visibility affordance and the shared font-size field frame. Persistence, IME handling, blank-key retention and session-only key semantics remain unchanged.
+
+- Single-line height is now written to the style applied by the actual component renderer: 32px for endpoint/model/font-size and 36px for API key, with 12px horizontal inset, 8px radius and 20px line height. The native editor owns vertical centering rather than the library's default 8px vertical frame padding. The font-size suffix and right alignment remain intact.
+- Replaced the internal key toggle with a 24px ghost button, 14px eye icon, 6px radius, 6px field inset and localized show/hide tooltip/accessibility label. Its native mask toggle notifies the parent so icon and label update with the actual state. The key field reserves 40px for this overlay.
+- Added style-builder coverage for light/dark themes, 32/36px heights and 12/14/20px fonts, plus both eye-button states and languages. These are source contracts, not rendered geometry or interaction tests.
+- Verification: **132 tests passed** with `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline -q`; offline release build, focused `rustfmt --edition 2021 --check` and `git diff --check` passed. Binary: `/tmp/codex-native-target/release/volt`, SHA256 `d3a8e8eb203be1d462e5dea0ec7b338d1da06cbe005284e76470d19c7368f50b`.
+- The current macOS window probe returned `Screen is locked`. Fresh light/dark wide/narrow, largest-font, pointer/keyboard, mask-toggle/save-feedback and matched-reference acceptance remain **PARTIAL**. Older captures are not attributed to this binary.
+
+## Settings Select trigger follow-up - 2026-10-29
+
+Parent: the settings form control follow-up above and the full ZCode alignment objective.
+Source: the user's ongoing ZCode comparison and the pinned ZCode 3.16.2 Select contract.
+Reason: Select triggers retained the library's default vertical padding and horizontal insets, which made the 32px frame visually tighter than the reference control.
+Scope/risk/orchestration: low-risk native single writer; settings Select trigger geometry only. Menu behavior, option state, focus handling, accessibility labels and existing width constraints remain unchanged.
+
+- Compared the pinned `components/ui/select.tsx` large trigger: 32px height, 12px left inset, 8px right inset, 8px radius and no vertical frame padding.
+- Added `settings_select` on top of the shared settings control frame and applied it to General language, Footer language, Footer theme and Appearance theme. The native GPUI-Kit menu and focus behavior remain the owner of interaction states.
+- Added builder coverage for light/dark themes and 12/14/20px interface sizes, checking height, min-width, insets, typography, surface and border. These tests are source contracts, not rendered label measurements or pointer/focus acceptance.
+- Verification: **133 tests passed** with `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline -q`; the matching offline release build passed. Focused `rustfmt --edition 2021 --check` and `git diff --check` passed. Binary: `/tmp/codex-native-target/release/volt`, SHA256 `a67468df0d379133222a1dbfe6821923d2ff511a78d3f90e72d836087a94cce5`.
+- The current macOS window probe returned `Screen is locked`. Fresh light/dark 1200x800 and 480x640 captures, Chinese/English and largest-font layout, pointer/keyboard/focus interaction, and matched-reference pixels remain **PARTIAL**. No older running binary or screenshot is attributed to this change.
+
+## Settings shortcut badge follow-up - 2026-10-29
+
+Parent: the settings Select trigger follow-up above and the full ZCode alignment objective.
+Source: user's ongoing button-detail comparison, pinned ZCode 3.16.2 `ShortcutBindingRow.tsx`, `kbd.tsx`, `ControlShortcutBadge.tsx`, `shortcuts/label.ts`, and the final Zai tooltip-tag tokens.
+Reason: bindings used a merged cross-platform string and a static keyboard glyph, although the reference uses separate platform-specific keycaps; task search was missing from the displayed native bindings.
+Scope/risk/orchestration: low-risk native single writer; shortcut settings presentation only. Key bindings, handlers, persistence, save behavior and the workbench root remain unchanged.
+
+- Split bindings into platform-specific keycaps: Command and Shift symbols with the macOS system font, or Ctrl/Shift labels with the configured monospace font elsewhere. Each badge uses 16px height/minimum width, 6px inline padding/radius, base-minus-4px medium text, the reference tooltip-tag palette and a 4px inter-key gap.
+- Removed the static Keyboard glyph, which the reference reserves for recording. Added the existing primary-K task-search binding so all eight native bindings are represented. No recording, rebinding or deletion controls were fabricated.
+- Below a 640px viewport, rows stack label and binding with an 8px gap; wider rows retain the 12px horizontal gap. Key groups wrap without shrinking individual badges. Existing 16px/12px row padding and dividers remain.
+- Added four focused tests for platform token ordering, actual keycap builder styles across both themes and 12/14/20px fonts, narrow/wide row styles, and group wrapping constraints. The theme palette test brings the suite to **138 passed** with `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline -q`. These assert source contracts, not rendered glyph bounds, key dispatch or pixel parity.
+- The matching `cargo build -p pi-desktop --release --offline`, focused rustfmt checks and `git diff --check` passed. Binary: `/tmp/codex-native-target/release/volt`, SHA256 `754c537333dcf71c116adffa0faf5fabd18a9b78760b14db23d3ca31b2c92e9f`. The build reports the existing future-incompatibility warning for dependency `block 0.1.6`; no dependencies or lockfile changed.
+- The fresh macOS window probe returned `Screen is locked`. No current-build screenshots or interaction replay were obtained. Light/dark 1200x800 and 480x640 captures, Chinese/English and largest-font layout, save/mask controls, hover/pressed/keyboard focus, and matched-reference pixels remain **PARTIAL**. The full visual-parity goal is not complete.
+
+## Settings card clipping follow-up - 2026-10-29
+
+Parent: the settings shortcut badge follow-up above and the full ZCode alignment objective.
+Source: pinned ZCode `SettingsPageParts.tsx` `SettingsGroupCard`, plus the user's model-provider settings screenshot.
+Reason: the native settings card matched the 12px rounded border and surface but lacked the reference card's overflow constraint.
+Scope/risk/orchestration: low-risk native single writer; settings card frame presentation only. Child controls, persistence, handlers and card contents remain unchanged.
+
+- Added `overflow_hidden()` to the shared settings card, used by General, Providers, Appearance, Agent capabilities, Subagents and Shortcuts. Skills and Usage use separate surfaces. GPUI's `Style::overflow_mask` constructs a rectangular content mask, so these flags do not establish rounded child masking or prevent all corner overpaint. Rounded-corner pixels and focus effects remain unverified.
+- Added light/dark builder coverage for the overflow axes, frame geometry, radius, surface and border. This is source-level evidence, not a rendered corner pixel comparison.
+- Verification: **139 tests passed** with `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline -q`; matching offline release build, focused rustfmt checks and `git diff --check` passed. Binary: `/tmp/codex-native-target/release/volt`, SHA256 `e7a826b591c112a999f87e8f72cdbc59028abe91bc796b795769f4cb9ec282f4`.
+- The macOS window probe still returns `Screen is locked`; fresh current-build light/dark, compact, focus, interaction and pixel evidence remain **PARTIAL**.
+
+## Settings secondary action detail follow-up - 2026-10-29
+
+Parent: the settings button-detail follow-ups and the full ZCode alignment objective.
+Source: user's attached button feedback and ongoing comparison request.
+Reason: Use in task and Windows shortcut installation still reused workbench navigation content with full-width inner layout, small text and an 8px icon gap.
+Scope/risk/orchestration: low-risk native single writer; settings command presentation only. Handlers, disabled state, persistence, navigation and workbench controls remain unchanged.
+
+- Added settings-owned secondary commands using the pinned `button.tsx` default-size geometry: content width, 28px height, 6px radius, 8px inline padding, 14px icons, 4px gap and centered interface-size labels. The native ghost variant still owns interaction states. Windows installation sets start alignment at its column-layout call site; skill actions retain their row's vertical centering.
+- Shared only the existing icon/label content between save and secondary commands; the save button retains its 32px/8px-radius/16px-icon large-button geometry.
+- Added two builder tests covering Chinese/English labels and 12/14/20px fonts. They check content-width constraints, geometry, text and gap, not rendered glyph bounds or runtime interactions.
+- Corrected the preceding clipping record after inspecting GPUI `Style::overflow_mask`: the mask is rectangular, not rounded, and shared `card()` does not host Skills or Usage. Rounded corner masking remains an open visual difference.
+- Final-source verification: **141 tests passed** with `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline -q`; matching offline release build, focused rustfmt checks and `git diff --check` passed. Binary: `/tmp/codex-native-target/release/volt`, SHA256 `ba2abe8397ea63f5ad01467c2af6c977bb77c071ab24f7d5c648281dbc4bfb1b`. Dependencies and lockfile remain unchanged; the existing `block 0.1.6` future-incompatibility warning remains.
+- The current macOS probe returned `Screen is locked`; no current-build capture or interaction replay was obtained. Matched light/dark 1200x800 and 480x640 captures, Chinese/English and maximum-font layouts, pointer/keyboard states and save feedback remain **PARTIAL**. The full visual-parity objective remains active; no commit, push or deployment was performed.
+
+## Settings interface font control follow-up - 2026-10-29
+
+Parent: the settings secondary action detail follow-up and the full ZCode alignment objective.
+Source: pinned ZCode `settingsCodePreview.tsx` `FontSizeInput`.
+Reason: the native interface-font control was 32px high and rendered `px` through the input's layout-participating suffix, while the reference uses a 28px compact input with an independently positioned unit label.
+Scope/risk/orchestration: low-risk native single writer; Appearance interface-font control presentation only. Range validation, Enter/blur commit, persistence and inherited font scaling remain unchanged.
+
+- Added a 112x28px relative frame. The input now uses a 6px radius, 8px left inset, 32px right reservation and right-aligned value; the `px` label is absolute and noninteractive at the right 8px inset, with interface-size-plus-2px text.
+- Added builder coverage for light/dark themes and 12/14/20px interface sizes, including frame geometry, absolute unit placement, text alignment, reserved inset, surface and radius. These are source contracts, not rendered glyph or cursor measurements.
+- Final-source verification: **142 tests passed** with `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline -q`; matching offline release build, focused rustfmt checks and `git diff --check` passed. Binary: `/tmp/codex-native-target/release/volt`, SHA256 `4d3910d72bdc6f170c1b7a805198fc3ee629bc6b4054053a6424c5172bf92fb4`.
+- The current macOS probe remains `Screen is locked`; no current-build capture or interaction replay was obtained. Light/dark 1200x800 and 480x640 captures, Chinese/English and maximum-font layout, pointer/keyboard focus, save feedback and pixel comparison remain **PARTIAL**. No commit, push or deployment was performed.
+
+## Workflow phase landing follow-up - 2026-10-29
+
+Parent: the ongoing ZCode workflow run pane alignment and settings detail follow-ups.
+Source: pinned ZCode `WorkflowRunPhaseList.tsx` and the native GPUI `ScrollHandle` implementation.
+Reason: the previous ScrollHandle API already deferred positioning until prepaint, but jumped directly to the stage without smooth travel, explicit landing state or user cancellation.
+Scope/risk/orchestration: low-risk native single writer; workflow pane phase landing and cancellation state only. Stage grouping, focus restoration, node disclosure and workflow persistence remain unchanged.
+
+- Phase landing now waits for post-layout child bounds, starts from the current vertical offset, and uses a 300ms native cubic-bezier approximation to the reference smooth scroll. The destination is clamped to the live scroll range on every frame.
+- Reopening the same stage replaces the current motion, reduced motion lands immediately, and stage removal or an unavailable workflow clears pending state. Wheel input on either axis, pointer and plain keyboard scrolling cancel the landing so the pane does not reclaim user control. An independent read-only verifier identified the horizontal-wheel case because GPUI can map it to vertical scrolling; regression coverage now includes both axes and zero-delta preservation.
+- Added seven deterministic state tests covering deferred layout, repeated landing, cancellation on either wheel axis, reduced motion, resize/non-scrollable bounds and stage removal. These tests cover state and coordinate contracts, not native pointer replay or pixel output.
+- Final-source verification: **149 tests passed** with `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline -q`; matching offline release build, focused `rustfmt --edition 2021 --check` and `git diff --check` passed. Final binary SHA256: `5994ef49150049488cf6c641a93de5e637748e751fbe01b1eee0df566cfe1ee7`. The build retains the existing `block 0.1.6` future-incompatibility warning.
+- The reference's transient phase landing surface remains intentionally open after source inspection found duplicate `wf-land` declarations in the pinned stylesheet, with the later opacity keyframes overriding the earlier background-color keyframes. The screen briefly became available and the pre-review Release rendered successfully; see the limited capture evidence below. Stage landing itself was not replayed. Overall visual parity remains **PARTIAL** and no commit, push or deployment was performed.
+
+## Settings button capture checkpoint - 2026-10-29
+
+Parent: the user's attached save-button feedback and the settings detail follow-ups above.
+Source: the isolated native Release process and direct inspection of its captured model-provider settings page.
+Reason: source-style checks alone did not establish that the content-sized save action rendered correctly.
+Scope/risk/orchestration: read-only native GUI checkpoint using an offline temporary state directory; no real credentials, requests or user-state changes.
+
+- The isolated 1200x800 window successfully rendered the light-theme workflow and model-provider settings pages. AXPress navigation opened Preferences and Model providers. The save button visibly sizes to its Check icon and Chinese label with centered content, without the previous large right-side gap. Fields and the action remain visible without obvious overlap at this size.
+- Preserved full-window captures outside the repository:
+  - Workflow: `/Users/zhd/.codex/visualizations/2026/10/26/01a1764d-5a1f-74b2-8fa3-c0499328387b/workflow-light-20261029.png`
+  - Settings: `/Users/zhd/.codex/visualizations/2026/10/26/01a1764d-5a1f-74b2-8fa3-c0499328387b/settings-save-light-20261029.png`
+- These captures precede the final horizontal-wheel cancellation fix, which did not change settings presentation. They are not screenshots of the final binary hash and are not matched ZCode pixel comparisons. The settings capture contains a navigation tooltip.
+- At 23:26 local time the selected-window probe returned `Screen is locked`; subsequent capture failed. Dark/480x640/maximum-font rendering, hover/pressed/keyboard focus, save feedback, key visibility and workflow landing replay remain unverified. The isolated test process was stopped; the user's existing application processes and real state were not touched.
+
+## Workflow roster-door interaction follow-up - 2026-10-29
+
+Parent: the ongoing full ZCode visual-alignment objective and workflow roster continuation.
+Source: the user's explicit goal continuation, pinned `WorkflowMoreRow.tsx`, and the `.wf-more-deck`, `.wf-pill-name`, `.wf-pill-open` rules in `styles.css`.
+Reason: the aggregate button kept a static -5px face overlap, changed its surface abruptly and did not promote its name to primary foreground on hover or keyboard-visible focus.
+Scope/risk/orchestration: medium-risk native single writer with one independent read-only verifier, limited to the shared timeline/pane aggregate control. Roster ordering, counts, disclosure handlers, workflow persistence and the full objective remain unchanged.
+
+- Added a local render component to own per-row hover, focus and transition state without widening the workflow renderer's signatures or adding application-global interaction maps. Its focus subscriptions leave with keyed element state. The native Base Button retains keyboard activation, accessibility label, aria-expanded, tooltip, ring and the existing click handler.
+- Pointer hover and keyboard-visible focus animate the face overlap from -5px to -2px over 160ms with cubic-bezier(0.22, 0.61, 0.36, 1), matching the pinned stylesheet. A single interruptible engagement channel drives face spacing, alpha surface and label foreground; reduced motion uses zero duration. The open pane door remains emphasized independently from hover.
+- Added four deterministic tests for the overlap bounds/timing, light/dark alpha surfaces and text, the open-door presentation, and all hover/focus/modality combinations. They do not prove hover delivery, focus traversal, actual truncation or rendered pixels.
+- The independent verifier found that the first implementation selected hover or focus exclusively by input modality, and GPUI's default hover listener suppresses hover after keyboard input. Corrected engagement to hover OR keyboard-visible focus and selected `InputModalityIndependent` for the single hover listener. The regression includes Tab moving focus away while the mouse remains over the row. The same verifier confirmed the correction without new findings; real GUI replay remains pending.
+- Re-inspected the landing keyframes rather than following the reference's stale background-flash comment: `.wf-landed` uses 1200ms, but the last `@keyframes wf-land` scales from 0.6 and fades from zero. Current GPUI exposes transforms for SVG/icon painting but no generic subtree scaling builder. Exact landing/pressed scale remains open; this follow-up does not replace it with a different visual effect or call it complete.
+- Final-source verification, completed across midnight on 2026-10-29/30: **153 tests passed**, the matching offline Release build, focused rustfmt and `git diff --check` passed. Release SHA256: `37f5c2c728668833cfe1418ac23ad3892f9f0d73c77c2bd780212939c4c6682a`. Whole-package `cargo fmt --check` also reports pre-existing formatting differences in `execution.rs`, `generative_ui.rs` and `panels.rs`; those unrelated files were left unchanged. The existing dependency warning for `block 0.1.6` remains; manifests and lockfile did not change.
+- At 00:00 on 2026-10-30, the selected-window probe again returned `Screen is locked`. No GUI was launched in this follow-up. This change has no new rendered or interaction evidence; prior light settings captures are not evidence for it. Overall visual parity remains **PARTIAL**, including full light/dark, 480x640, keyboard/pointer and matched-reference verification. No commit, push or deployment was performed.
+
+## Workflow roster settlement and disclosure motion - 2026-10-30
+
+Parent: the workflow roster-door interaction follow-up and the full ZCode alignment objective.
+Source: pinned ZCode `WorkflowRunPhaseList.tsx`, `WorkflowRosterParts.tsx`, `WorkflowMoreRow.tsx`, and `.wf-motion` / `.wf-meter-seg` / chevron rules in `styles.css`.
+Reason: pane meters changed segment weights immediately, and phase/roster disclosure icons swapped glyphs instead of preserving one icon and rotating it.
+Scope/risk/orchestration: medium-risk native single writer with the existing read-only verifier reused; pane roster presentation and disclosure motion only. Workflow state, stage ordering, click handlers, focus ownership and persistence remain unchanged.
+
+- Added a keyed native roster meter component with a fixed 44x3px frame, 1px inter-segment gap, 2px minimum segment width and observed node-count weights in the reference order: completed, failed, running, waiting, interrupted. Existing status colors remain semantic; interrupted remains distinct from waiting. Existing segments transition their flex weights over 320ms with the shared workflow easing, and reduced motion settles immediately.
+- Added a shared native chevron component. Pane stage headers keep one 14px ChevronRight and rotate to 90 degrees over 150ms with the reference Tailwind easing; roster doors keep one 14px ChevronDown and rotate to 180 degrees over 160ms with the roster easing. The card's always-present up-right arrow remains unchanged, while its idle-to-engaged tail color now follows the same aggregate interaction channel.
+- Added five deterministic tests for count/order semantics, fixed meter geometry, themed segment styles, chevron targets and reduced-motion timing. They verify source/state contracts, not rendered segment interpolation, pointer replay or pixels.
+- The independent read-only verifier found no new code blocker in the scoped changes: fixed geometry, transition-key isolation, reduced-motion policy and existing Button handlers/focus/expanded semantics remain intact. This was source review, not runtime or visual acceptance.
+- Verification after the source correction: **158 tests passed** with `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline -q`; matching offline Release build, focused rustfmt and `git diff --check` passed. Release SHA256: `0db50ddc4e52506374c19f28a68fcac028bab51331cc3dde6cd40263baf514f1`. The build retains the existing `block 0.1.6` future-incompatibility warning; dependencies and lockfile remain unchanged.
+- The current macOS window probe returned `Screen is locked`; no current-build capture or interaction replay was obtained. Light/dark, compact, reduced-motion GUI replay, hover/focus states, exact meter interpolation and matched-reference pixels remain **PARTIAL**. No commit, push or deployment was performed.
+
+## Workflow entrance and roster grid follow-up - 2026-10-30
+
+Parent: the workflow roster settlement and disclosure motion follow-up and the full ZCode alignment objective.
+Source: pinned ZCode `WorkflowTimeline.tsx`, `WorkflowRoll.tsx`, `WorkflowRunPhaseList.tsx`, and `wf-arrive`/`wf-unfold` rules in `styles.css`.
+Reason: timeline and pane rows still appeared synchronously, while the pane roster needed the reference's shared two-column roll and row cadence.
+Scope/risk/orchestration: medium-risk native single writer with one bounded read-only verifier; entrance presentation and roster layout only. Workflow ordering, disclosure state, handlers, focus ownership, persistence and backend semantics remain unchanged.
+
+- Added a keyed `WorkflowEntrance` render wrapper. Timeline pills use the global 30ms ordinal delay, including the aggregate row; pane roster rows use 8ms per row capped at 400ms. The wrapper approximates `wf-arrive` from +4px and `wf-unfold` from -3px over 200ms with the reference cubic-bezier, while relative positioning preserves sibling layout. Reduced motion settles immediately and removes delay.
+- Reshaped the expanded pane roster into one `grid-cols-2` frame with an 8px column gap and 2px top inset. Group headings span both columns at 22px height, use 4px left padding and 5px internal spacing, and add 4px only between groups. Existing attention ordering, source ordering, counts, node handlers and accessible disclosure semantics remain unchanged.
+- Added deterministic coverage for delayed/reduced-motion timing, start offsets and stable layout dimensions, the two-column frame, heading spans and reference spacing. These are source/state contracts, not rendered interpolation, pointer replay or pixel parity.
+- The independent read-only verifier found no new scoped blocker: mounted animation keys are stable and surface-scoped, reduced motion clears both timing components, timeline ordinals include the aggregate row, and the single roll grid preserves cross-group row delays. This is source review, not GUI lifecycle or interaction acceptance. The owner separately compiled and passed both new geometry tests as part of the 164-test run.
+- Verification: **164 tests passed** with `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline -q`; matching offline Release build passed. Focused `rustfmt --edition 2021 --check` and `git diff --check` passed. Release binary SHA256: `bc127ee97e60209bc9acb891240ab1aa180aad12e16410ce4f476b1c3fa881bd`. The build retains the existing `block 0.1.6` future-incompatibility warning; dependencies and lockfile remain unchanged.
+- The macOS window probe in this follow-up on `2026-10-30` returned `Screen is locked`. No current-build screenshot or interaction replay was obtained. Light/dark, compact, reduced-motion GUI replay, hover/focus states, exact entrance interpolation and matched-reference pixels remain **PARTIAL**. No commit, push or deployment was performed.
+
+## Settings command hover token follow-up - 2026-10-30
+
+Parent: the settings secondary action detail follow-up and the full ZCode alignment objective.
+Source: pinned ZCode `button.tsx`, `select.tsx`, and `.theme-zai-light` / `.theme-zai-dark` tokens in `styles.css`.
+Reason: GPUI-Kit's Ghost variant resolves hover through its accent palette, while ZCode settings commands use the neutral 5% hover surface in both themes.
+Scope/risk/orchestration: low-risk native single writer; settings command color presentation only. Geometry, handlers, persistence, disabled behavior, focus ownership and save semantics remain unchanged.
+
+- Added an explicit settings command variant with transparent idle, primary foreground, neutral hover/pressed surface (`hover` token) and native component focus treatment. Applied it to Windows shortcut installation, Skills “Use in task”, and the API-key visibility button. The global Ghost/navigation palette remains unchanged.
+- This fixes the source-level color-token mismatch without inventing a new interaction model. GPUI-Kit's color state is still immediate rather than the reference CSS `transition-colors` timing, so rendered transition acceptance remains open.
+- Verification: **164 tests passed** with `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline -q`; matching offline Release build passed. Focused rustfmt and `git diff --check` passed. Release binary SHA256: `e3714ca6eb2a0258cf3e20c8ecb5c01f640d757be6a434997ebdaef11d9aa250`. The existing `block 0.1.6` future-incompatibility warning remains; dependencies and lockfile are unchanged.
+- The macOS window probe on `2026-10-30` returned `Screen is locked`. No current-build screenshot or interaction replay was obtained; light/dark, compact, pointer/keyboard focus, color-transition timing and matched-reference pixels remain **PARTIAL**. No commit, push or deployment was performed.
+
+## Settings command color motion and tooltip follow-up - 2026-10-30
+
+Parent: the settings command hover token follow-up and the full ZCode alignment objective.
+Source: the user's save-button detail feedback, pinned ZCode `button.tsx` and its Tailwind color-transition defaults.
+Reason: command colors still changed immediately, and the first transition implementation competed with the eye button's managed tooltip for GPUI's single hover listener.
+Scope/risk/orchestration: medium-risk native single writer with one independent read-only verifier; settings save, shortcut-installation, skill-use and API-key visibility commands only. Button geometry, handlers, persistence, keyboard activation and native disabled semantics remain unchanged.
+
+- Added keyed, interruptible background and foreground transitions over 150ms with cubic-bezier(0.4, 0, 0.2, 1). Save retains black/white ink and fades its primary fill to 80% alpha on hover. Neutral commands transition from transparent to the existing neutral hover token. Reduced motion and disabled state settle immediately; pointer tracking remains input-modality independent.
+- The verifier identified a duplicate-hover registration in the initial implementation: the component's managed tooltip also calls `on_hover`. The eye button now keeps the styled Tooltip content through GPUI's separate native tooltip builder, preserving the localized accessibility label and fixed 24x24 geometry without a layout wrapper. The verifier confirmed the source-level conflict is closed with no new scoped finding. Native tooltip placement and event delivery remain unverified.
+- Four deterministic color-policy tests cover light/dark paint, disabled targets, reference timing, reduced motion and bounded alpha interpolation. The final full desktop run passed **168 tests** with `CARGO_TARGET_DIR=/Volumes/Datas/tmp-codex-native-target TMPDIR=/Volumes/Datas/tmp-codex-native-build-temp cargo test -p pi-desktop --offline -q`. These tests do not render the tooltip or replay pointer/keyboard interactions.
+- The matching offline Release build passed. Its binary is `/Volumes/Datas/tmp-codex-native-target/release/volt`, verified as a 33,127,056-byte arm64 Mach-O executable; SHA256 `28184d96ea6b56f685e5fae8b8602cfc5bff6e278204c9829b159717ce77d190`. This supersedes the failed system-disk build attempt, whose truncated output is not a valid artifact. The existing `block 0.1.6` future-incompatibility warning remains; dependencies and lockfile are unchanged.
+- Focused rustfmt checks and `git diff --check` passed. The current `window_info.swift` probe returned `Screen is locked`; no final-build screenshot or interaction replay was obtained. Light/dark, 1200x800 and 480x640, maximum-font layouts, hover/pressed/focus behavior, save feedback, key visibility, actual color-transition timing and matched-reference pixels remain **PARTIAL**. The full objective remains active. No commit, push or deployment was performed.
+
+## Settings command border geometry follow-up - 2026-10-30
+
+Parent: the settings command color motion follow-up and full ZCode alignment objective.
+Source: the user's save-button screenshot and the pinned `components/ui/button.tsx` base `border border-transparent` rule.
+Reason: native Primary, Ghost and Custom buttons do not reserve a border by default, unlike the reference command frame.
+Scope/risk/orchestration: low-risk native single writer; settings save, secondary commands and API-key visibility geometry only. Navigation, handlers, persistence and focus ownership remain unchanged.
+
+- Added an explicit 1px transparent border to these command builders. Content-sized actions now include the reference border reservation; existing fixed heights, inline padding, radii and icon sizes remain unchanged. The eye control stays 24x24px.
+- Added builder coverage for all four border edges and transparency across both languages, 12/14/20px interface sizes and both key-visibility states. This does not establish native rendering, focus-ring appearance or CSS `bg-clip-padding` pixel equivalence.
+- Verification: **169 tests passed**; matching offline Release build, focused rustfmt and `git diff --check` passed. Binary: `/Volumes/Datas/tmp-codex-native-target/release/volt`, SHA256 `68b6bbcea5b2903cbbbf6a55e61ccc2b89b184084b7901f49dcab38984bbdcaf`. Whole-workspace format checking still reports the existing unrelated differences in `execution.rs`, `generative_ui.rs` and `panels.rs`; they were left unchanged. The dependency warning for `block 0.1.6` remains.
+- The current macOS probe returned `Screen is locked`. No current-build screenshot or interaction replay was obtained; prior light captures are historical diagnostics only. Overall visual parity remains **PARTIAL** pending unlocked light/dark, compact, maximum-font, pointer/keyboard and matched-reference checks. No commit, push or deployment was performed.
+
+## Settings navigation color motion follow-up - 2026-10-30
+
+Parent: the settings command border geometry follow-up and full ZCode alignment objective.
+Source: pinned ZCode `SettingsSidebarButton` and settings back-button classes, including `transition-colors`, `bg-surface`, `bg-surface-hover`, `text-remote-foreground-muted` and `text-foreground`.
+Reason: settings navigation and Back used the correct idle/hover tokens but changed them immediately, unlike the reference color transition.
+Scope/risk/orchestration: medium-risk native single writer; settings navigation and Back presentation only. Selection persistence, handlers, keyboard activation, focus semantics, tooltips and layout remain unchanged.
+
+- Added keyed, interruptible 150ms transitions to navigation and Back backgrounds/foregrounds. Selected navigation remains emphasized after pointer exit; unselected rows fade to transparent when idle. Back transitions its idle surface and muted text together. Reduced motion and disabled states settle immediately.
+- Reused the existing native tooltip builder for navigation rows so the color-motion hover listener does not compete with the managed tooltip listener. The eye button uses the same helper; no layout wrapper or duplicate hover registration was added.
+- Added deterministic coverage for selected navigation, Back foreground/surface interpolation, disabled behavior and reduced-motion timing. This is source/state evidence, not rendered pointer, focus or tooltip placement evidence.
+- One independent read-only reviewer confirmed tooltip/hover slot separation, unique stable navigation keys and preserved click/persistence/return-focus calls. The review was stopped before its complete selected/hover/focus override audit and is recorded as **incomplete**, not a clean review receipt.
+- Verification: **171 tests passed**; matching offline Release build, focused rustfmt and `git diff --check` passed. Binary: `/Volumes/Datas/tmp-codex-native-target/release/volt`, SHA256 `2ee9a5c8c7aebaa28a9c932b69d2c0cdfc0372747dc378f2690ad9c8b003da73`. The existing `block 0.1.6` future-incompatibility warning remains.
+- The current macOS probe returned `Screen is locked`. No current-build screenshot or interaction replay was obtained; light/dark, compact, hover/focus, tooltip placement and matched-reference pixels remain **PARTIAL**. No commit, push or deployment was performed.
+
+## Settings disabled-command palette follow-up - 2026-10-30
+
+Parent: the settings navigation color motion follow-up and full ZCode alignment objective.
+Source: the user's button-detail feedback, pinned `button.tsx` `disabled:opacity-50`, and installed GPUI Component/Base 0.7.3 state resolution.
+Reason: disabled commands inherited the library's muted foreground and 15% fill instead of retaining idle colors with whole-control opacity.
+Scope/risk/orchestration: medium-risk native single writer with one bounded independent read-only verifier; settings command presentation only. Handlers, persistence, native disabled semantics, focus, keyboard activation, geometry and dependencies remain unchanged.
+
+- Pin both instance background and foreground for enabled and disabled commands, and apply 50% opacity only while disabled. The component replays these instance colors after selected/disabled palettes. Disabled targets remain idle even while the pointer is inside, and disabled/reduced-motion transitions settle immediately. Removed the redundant neutral variant helper.
+- Added deterministic builder coverage for all command kinds in both themes, checking whole-control opacity, retained colors, content-sized width, height, padding and transparent border reservation. This does not establish rendered compositing, input delivery or pixel parity.
+- The independent verifier completed the previously incomplete scoped selected/disabled/focus override audit without a new blocker. Native Base disabled activation, keyboard/focus behavior and the separate tooltip/hover slots remain intact in source; this is not GUI acceptance.
+- Verification: **172 tests passed** with `CARGO_TARGET_DIR=/tmp/codex-native-target cargo test -p pi-desktop --offline`; focused rustfmt and `git diff --check` passed. The matching offline Release build used `CARGO_TARGET_DIR=/Volumes/Datas/tmp-codex-native-target TMPDIR=/Volumes/Datas/tmp-codex-native-build-temp`; binary SHA256: `429bde77c757f2cc906b270583a78f5a9e208413800d97c980d041b210ae5064`. The existing `block 0.1.6` warning and unrelated whole-workspace formatting differences in `execution.rs`, `generative_ui.rs` and `panels.rs` remain unchanged.
+- The window-list helper initially returned a window, but the attempted capture failed with `could not create image from window`; a direct `CGSSessionScreenIsLocked` probe returned `1`, including the final probe. No screenshot was obtained. The isolated temporary-state Release process was stopped; no real configuration or existing application process was changed. Light/dark, compact, maximum-font, hover/pressed/focus, tooltip placement and matched-reference pixel acceptance remain **PARTIAL**. No commit, push or deployment was performed.
+
+## Settings input border feedback follow-up - 2026-10-30
+
+Parent: the settings disabled-command palette follow-up and full ZCode alignment objective.
+Source: the user's settings/button detail feedback, explicit continuation, and pinned ZCode `components/ui/input.tsx` plus Zai input tokens at `3c5b227649371507ddc4eb46ac5133afe6db1cab`.
+Reason: settings text inputs lacked the reference hover-border transition and still inherited the component's additional focus ring.
+Scope/risk/orchestration: medium-risk native single writer with one bounded independent read-only verifier; provider and interface-font text-input presentation only. The full objective, native editor entities, callbacks, masking, IME, persistence, command behavior and dependencies remain unchanged.
+
+- Added a keyed `SettingsField` observation shell around each existing native Input. Pointer hover or native editor focus targets the existing 15% neutral border; idle uses 10%. Border transitions use the reference 150ms cubic-bezier(0.4, 0, 0.2, 1), with zero duration under reduced motion. The input keeps its existing fill and uses this border instead of the library's extra focused border/ring.
+- The shell adds no frame, padding, background, fixed height or tab stop. Original 28/32/36px inputs, the separate API-key eye button and px suffix keep their existing geometry. Select triggers and their menus remain outside this change.
+- Added three deterministic tests covering light/dark hover/focus targets, timing/reduced motion, bounded alpha interpolation and the unframed shrinkable shell. These tests do not render the controls or exercise native pointer, focus traversal, selection, masking or IME.
+- Verification: **175 tests passed** with `CARGO_TARGET_DIR=/Volumes/Datas/tmp-codex-native-target TMPDIR=/Volumes/Datas/tmp-codex-native-build-temp cargo test -p pi-desktop --offline -q`; matching offline Release build, focused rustfmt and `git diff --check` passed. Binary: `/Volumes/Datas/tmp-codex-native-target/release/volt`, arm64 Mach-O, SHA256 `62e9f55f3d0386df2139450235762867b7da252372ac3975e985e36ce813b1e5`. The existing `block 0.1.6` future-incompatibility warning remains.
+- Independent source review completed with no scoped blocker. It confirmed keyed focus subscriptions and one hover listener, preserved native editor/IME/masking/callback paths, replacement border precedence after disabling the library focus ring, unchanged 28/32/36px input frames, and unchanged save-button content sizing and activation semantics. This is source review only. A direct `CGSSessionScreenIsLocked` probe returned `1` on 2026-10-30; no GUI process was launched or new screenshot obtained. Light/dark, compact, maximum-font, pointer/keyboard focus, actual border interpolation, eye/suffix hit testing and matched-reference pixels remain **PARTIAL**. Prior captures are historical diagnostics, not acceptance for this binary. No commit, push or deployment was performed.
+
+## Settings Select hover and state ownership follow-up - 2026-10-30
+
+Parent: the settings input border feedback follow-up and full ZCode alignment objective.
+Source: the user's explicit continuation, pinned ZCode `components/ui/select.tsx` / Zai tokens, and installed GPUI Component 0.7.3 Select rendering and event delivery.
+Reason: settings Select triggers lacked neutral hover-border feedback; adding independent hover state exposed existing reuse of one native SelectState at two simultaneously rendered locations. That state holds only one style, popup bounds, focus and open state.
+Scope/risk/orchestration: medium-risk native single writer with the same bounded independent read-only verifier; settings Select presentation and per-trigger ownership plus language/theme value synchronization. The full visual objective and native menu, keyboard/activation, persistence and save semantics remain unchanged.
+
+- Added a keyed, non-focusable 32px shell with one input-modality-independent hover listener. Hover transitions the neutral border from 10% to 15% over 150ms with cubic-bezier(0.4, 0, 0.2, 1); reduced motion settles immediately. The original Select retains focused/open border precedence. Its focus changes remain immediate, not reference-transition acceptance.
+- Each General/Appearance/footer trigger now owns an independent native Entity. Existing language handlers synchronize both language values and refresh both theme menus' localized labels; theme confirmation synchronizes both theme values. This prevents style, focus, popup bounds and open state from being shared between different triggers. No custom menu engine or activation path was introduced.
+- Content shells use explicit full width; the two footer shells use zero-basis flex and a zero minimum width. The shell adds no padding, paint, border or overflow clipping. Four tests cover exact light/dark hover colors, timing/reduced motion and bounded interpolation, stable unpainted geometry and footer/content width contracts. They do not exercise native layout or menu input.
+- Independent source review confirmed distinct state ownership and synchronization, queued Confirm event delivery without source state/list reentry, and no recursive Confirm emission from `set_selected_index`. Native popup positioning, keyboard focus restoration and actual rendered states remain unverified.
+- Final verification: **179 tests passed** with `CARGO_TARGET_DIR=/Volumes/Datas/tmp-codex-native-target TMPDIR=/Volumes/Datas/tmp-codex-native-build-temp cargo test -p pi-desktop --offline -q`; matching offline Release build passed, focused rustfmt and `git diff --check` passed. Binary: `/Volumes/Datas/tmp-codex-native-target/release/volt`, arm64 Mach-O, SHA256 `5807846140aec74f444b0910f61556bcf9ede4792fee86a5d12d671be4a8802f`. The existing `block 0.1.6` future-incompatibility warning remains. The direct screen-lock probe returned `1`; no native GUI process was launched or new screenshot obtained. Focus-transition timing, caret sizing/color, light/dark and compact/maximum-font layout, menu anchoring, pointer/keyboard and matched-reference acceptance remain **PARTIAL**. No commit, push or deployment was performed.
+
+## Settings screenshot recheck and acceptance blocker - 2026-10-30
+
+Parent: the settings Select ownership follow-up and full ZCode alignment objective.
+Source: the user's attached Save-button screenshot and explicit request to continue comparing details.
+Reason: recheck the accumulated button corrections before making further unobserved presentation changes.
+Scope/risk/orchestration: low-risk native owner; source inspection and deterministic verification only. No application code, dependencies, configuration, or running application state was changed in this recheck.
+
+- Reconfirmed the pinned reference commit and Save's existing content-sized 32px frame, 8px radius, transparent border, 10px horizontal padding, centered 16px Check/label content, 4px gap and themed hover/disabled policy. These are implementation contracts, not a new rendered acceptance receipt.
+- The reference Select caret is explicitly 14px and subtle. The installed native default caret is 16px; its icon override forces 12px and muted ink. Changing the Select size would also change its list delegate size. No caret workaround was introduced; that difference remains open.
+- Re-ran all **179 desktop tests**, focused settings-control rustfmt checks and `git diff --check` successfully. The matching offline Release build passed; `/Volumes/Datas/tmp-codex-native-target/release/volt` retains SHA256 `5807846140aec74f444b0910f61556bcf9ede4792fee86a5d12d671be4a8802f`. The existing `block 0.1.6` future-incompatibility warning remains.
+- The direct `CGSSessionScreenIsLocked` probe again returned `1`. This repeats the same acceptance blocker across consecutive follow-ups. No current-build screenshot or pointer/keyboard replay was obtained. Further visual acceptance requires an unlocked desktop; the full objective remains **PARTIAL**, with goal execution **blocked** at this boundary rather than reported complete.
+- After unlock, compare current-build light/dark screenshots at 1200x800 and 480x640, including 20px interface text, Save hover/focus/feedback, key visibility, and Select menu anchoring. Previously documented source differences and broader workflow/Markdown gaps remain open; this recheck does not reduce the full objective or add unrelated tooling work. No commit, push or deployment was performed.
+
+## Settings Save button semantic variant follow-up - 2026-10-30
+
+Parent: the settings screenshot recheck and acceptance blocker.
+Source: the attached Save-button screenshot, pinned ZCode `button.tsx` large variant, and the installed GPUI Component 0.7.3 Button size semantics.
+Reason: the Save button already matched the visible 32px frame and content sizing, but it used the native `small` variant as its base and then overrode the frame. Align the underlying size choice with the reference large variant. Its custom child already owns label/icon sizing, so this does not establish a visible correction or a focus-treatment difference.
+Scope/risk/orchestration: low-risk native single writer; Save presentation semantics only. Click handling, persistence, feedback, disabled behavior, hover motion, geometry overrides, and dependencies remain unchanged.
+
+- Changed the Save command to use the native large Button variant while preserving the explicit 32px height, 8px radius, 10px inline padding, transparent border reservation, Check glyph, 4px gap and interface-size label.
+- Existing localized builder coverage still checks its geometry; updated the design contract. This verifies source geometry only; it does not establish rendered pixels or pointer/focus behavior.
+
+## Settings Select indicator follow-up - 2026-10-30
+
+Parent: the Save semantic variant follow-up and full ZCode alignment objective.
+Source: explicit continuation of the user's settings-detail comparison and pinned ZCode `select.tsx` default `size-3.5` indicator.
+Reason: the native default caret is 16px, while changing Select size to obtain a 14px caret would also change its menu delegate. Custom icons are adapted to 12px by the installed component.
+Scope/risk/orchestration: low-risk native single writer; settings Select indicator constraints only. Trigger frames, native state ownership, menu sizing, handlers, focus, persistence and dependencies remain unchanged.
+
+- Supply the existing ChevronDown asset with 14px minimum/maximum constraints on both axes, which survive the component's custom-icon xsmall adaptation. This leaves the Select's own size and native popup path intact. One focused builder test checks those constraints and the absence of extra paint/padding.
+- Confirmed that `sync_component_theme` already maps `muted_foreground` directly to the reference `foreground_subtle`, so no palette change is needed. Rendered indicator bounds and menu interaction still require current-binary verification.
+- Verification: **180 desktop tests passed**; matching offline Release build, focused `rustfmt --edition 2021 --check`, and `git diff --check` passed. Final binary: `/Volumes/Datas/tmp-codex-native-target/release/volt`, SHA256 `2794a5689d2ba4435005c06c47f9f11f90ce6a96a6f622ff42f1dd0cabbad599`. The existing `block 0.1.6` future-incompatibility warning remains. An initial format command incorrectly used edition 2024; its import-order differences were not applied, and the correct project-edition check passed.
+- Capture is available again; a missing screen-lock dictionary key returned `unknown`, not confirmation of a locked desktop. The isolated pre-change binary (`580784...`) rendered General at 1200x800 in light mode. Its accessibility tree measured the Save button at **98x32px**, and the screenshot showed centered icon/label without the old trailing gap. Capture: `/var/folders/h7/9t4_q7bd6p9489dhdy_bdt400000gn/T/codex-shot-2026-10-30_08-12-39.png`. This is baseline layout evidence, not acceptance of the final indicator change.
+- The final binary was launched with a separate temporary state containing only a local test endpoint, fixture model, dark theme and 20px interface preference. Its dark startup screen rendered, but Settings interaction was not completed: System Events returned `osascript is not allowed assistive access` (`-25211`), and the window bounds changed between probes. Stopped coordinate automation rather than applying further uncertain pointer input. Startup capture: `/var/folders/h7/9t4_q7bd6p9489dhdy_bdt400000gn/T/codex-shot-2026-10-30_08-26-23.png`. Final Settings light/dark, 480x640, maximum-font, Save hover/focus/feedback, eye toggle, rendered 14px indicator, menu anchoring and matched-reference acceptance remain **PARTIAL**. No commit, push or deployment was performed.
+
+## Settings narrow-window row follow-up - 2026-10-30
+
+Parent: the settings Select indicator follow-up and full ZCode alignment objective.
+Source: the user's explicit continuation and button-detail screenshot, the native 480x640 minimum-window contract, and pinned `settings/SettingsPageParts.tsx`.
+Reason: a fixed 192px control column leaves little room for labels/descriptions in narrow native windows, especially at 20px interface text.
+Scope/risk/orchestration: low-risk native single writer; General, Appearance, capabilities and Subagents row layout only. Provider fields already use full-width vertical layout. Save geometry, control entities, menus, callbacks, persistence and dependencies remain unchanged.
+
+- Rows now stack label/description above the full-width control frame below a 640px viewport width. Wide rows keep the 192px column. Both modes retain 16px gaps and 16px/12px padding, with no fixed row height. Select fills the narrow control row; fixed font/switch controls remain right-aligned.
+- Reference clarification: the pinned default SettingsRow itself always uses `minmax(0,1fr) + 192px`; only its optional wide variant has a single-column breakpoint. This change is an explicit native minimum-window adaptation, not an asserted default-reference breakpoint.
+- Added two deterministic builder tests for row direction, alignment, natural height, padding/gaps and control-column width. **182 desktop tests passed** with `CARGO_TARGET_DIR=/Volumes/Datas/tmp-codex-native-target TMPDIR=/Volumes/Datas/tmp-codex-native-build-temp cargo test -p pi-desktop --offline -q`. The matching offline Release build passed. Binary: `/Volumes/Datas/tmp-codex-native-target/release/volt`, SHA256 `2dec9fade5b271aca0cb683bc9d8a644dd11f5c32d352040952d2d9e0937d671`. Focused Rust 2021 rustfmt and `git diff --check` passed. The existing `block 0.1.6` warning and unrelated format differences in `execution.rs`, `generative_ui.rs` and `panels.rs` remain unchanged.
+- GUI acceptance is **PARTIAL**: Screen Recording and Accessibility permission probes passed, but final-build window capture returned `could not create image from window`; the identity/geometry helper explicitly returned `Screen is locked`. No current-build screenshot, narrow resize, maximum-font layout, Save interaction or Select menu acceptance was obtained. The isolated dark/English/20px fixture process was stopped; real application state and existing processes were not changed. No commit, push or deployment was performed.
+
+## Assistant Markdown table overflow follow-up - 2026-10-30
+
+Parent: the ongoing ZCode alignment objective and the prior Markdown table/source comparison.
+Source: pinned ZCode `markdown-table.tsx` and installed GPUI Base `TextView` table layout.
+Reason: native Markdown tables used the adaptive wrapping path without horizontal overflow, so a column wider than the transcript could become clipped or unreachable instead of remaining scrollable like the reference table frame.
+Scope/risk/orchestration: medium-risk native single writer with one bounded independent read-only verifier; assistant Markdown table frame presentation only. Markdown parsing, selectable text, table colors, cell padding, heading treatment and transcript scroll ownership remain unchanged.
+
+- Added a dedicated assistant table-frame style with the existing 12px radius and chat-surface background, opting into GPUI Base's native horizontal-scroll layout. The renderer keeps its measured adaptive columns and wrapping behavior; it does not force `nowrap`, alter vertical overflow, or add a custom scrollbar/menu implementation.
+- Added one deterministic style test for light/dark background, radius, horizontal overflow, unconstrained frame dimensions and preserved wrapping. This verifies the style contract, not actual column measurement, scrollbar painting, wheel bubbling, selection or corner pixels.
+- Independent-review correction: the bounded read-only verifier was closed while still running and returned no review conclusion. This follow-up has no completed independent-review receipt; the source tests/build below do not replace it.
+- Verification: **183 desktop tests passed** with `CARGO_TARGET_DIR=/Volumes/Datas/tmp-codex-native-target TMPDIR=/Volumes/Datas/tmp-codex-native-build-temp cargo test -p pi-desktop --offline -q`; focused Rust 2021 rustfmt and `git diff --check` passed. The matching offline Release build passed. Binary: `/Volumes/Datas/tmp-codex-native-target/release/volt`, arm64 Mach-O, SHA256 `85b9cb95d4ec83e06069f0867aae484afec4c2b51be39a8b64aa277d636df305`. The existing `block 0.1.6` warning remains; no dependency or lockfile changes were made.
+- GUI acceptance remains **PARTIAL**. The current `window_info.swift` probe returned `Screen is locked`; no final-build Markdown table capture or wheel/selection replay was obtained. The reference's edge shadows, virtual scrollbar, toolbar actions and preview dialog remain outside this narrow follow-up. No commit, push or deployment was performed.
+
+## Settings Save feedback layout follow-up - 2026-10-30
+
+Parent: the settings Save button detail follow-ups and full ZCode alignment objective.
+Source: the user's attached button screenshot, explicit continuation, and reinspection of the pinned `button.tsx` large-button geometry.
+Reason: the Save frame is already content-sized, but its success text was a separate child of the page's 32px-gap column, visually disconnecting feedback from the action.
+Scope/risk/orchestration: low-risk native single writer, external=0; Save action/feedback layout only. The complete parity objective remains unchanged. Existing button dimensions, Check glyph, localized labels, click handler, native focus/activation, errors, persistence and dependencies remain unchanged.
+
+- Place the native command and existing success text together in an unframed, full-width wrapping row: 32px minimum height, centered cross-axis alignment, 12px horizontal gap and 8px wrap gap. The button keeps its content width and fixed 32px height. Feedback retains the interface font and success color, uses 1.5 line height, and can wrap naturally at narrow widths or 20px text instead of forcing horizontal overflow. A wrapped success state can still increase the row height.
+- This is a native feedback-layout adaptation, not a claim that the reference settings page has the same global Save action. No speculative icon replacement, fixed label width, new state machine or toast implementation was introduced.
+- Added two deterministic builder tests for row wrapping/unframed geometry and localized feedback typography in both themes at 12/14/20px. They do not establish rendered text measurement, actual success/error activation or pixel parity.
+- Verification is **PARTIAL**, not a test/build pass. Focused Rust 2021 rustfmt and `git diff --check` passed. The offline desktop test command was interrupted after approximately ten minutes stalled in dependency metadata loading; the subsequent `CARGO_INCREMENTAL=0 cargo check -p pi-desktop --tests --offline` advanced through native dependencies but was also interrupted after exceeding the bounded verification window. Both returned 130, not a source-error or test-failure receipt. No desktop tests completed for this change, and no matching Release binary was built; the preceding 183-test result and binary hash belong to the previous table change. Confirmed that no Cargo or rustc processes remained after interruption.
+- The macOS window probe explicitly returned `Screen is locked`; no final-build GUI capture or interaction replay was attempted. Rendered button/feedback alignment, narrow wrapping, maximum-font layout, hover/focus and actual save feedback remain unverified. Full visual acceptance remains **PARTIAL**. No commit, push or deployment was performed.

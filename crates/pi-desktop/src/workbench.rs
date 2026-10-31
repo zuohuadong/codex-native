@@ -882,6 +882,11 @@ fn sync_component_theme(colors: &ThemeColors, font_size: Pixels, cx: &mut Contex
     palette.popover_foreground = palette.foreground;
     palette.ring = rgba(colors.dock_border_active).into();
     palette.list = palette.popover;
+    // Searchable Select rows use the component accent token for their
+    // highlighted/selected background, not `list_hover`. Project it to the
+    // reference menu-hover surface so keyboard and pointer states stay neutral.
+    palette.accent = rgb(colors.menu_hover).into();
+    palette.accent_foreground = palette.foreground;
     // Select/Combobox popup rows use the reference menu-hover surface, not the
     // semi-transparent page selection token.
     palette.list_hover = rgb(colors.menu_hover).into();
@@ -5327,6 +5332,18 @@ const ASSISTANT_HEADING_PADDING_TOP: f32 = 8.;
 /// ZCode heading `mb-4`.
 const ASSISTANT_HEADING_PADDING_BOTTOM: f32 = 16.;
 
+fn assistant_table_frame(colors: &ThemeColors) -> gpui::StyleRefinement {
+    let radius = ASSISTANT_TABLE_RADIUS.into();
+    let mut table = gpui::StyleRefinement::default().bg(rgb(colors.root_bg));
+    table.corner_radii.top_left = Some(radius);
+    table.corner_radii.top_right = Some(radius);
+    table.corner_radii.bottom_left = Some(radius);
+    table.corner_radii.bottom_right = Some(radius);
+    // The native scroll layout keeps columns reachable below their width floors.
+    table.overflow.x = Some(gpui::Overflow::Scroll);
+    table
+}
+
 /// Theme-backed rich text, with the reference heading, table, and link colors.
 fn assistant_text_style(
     font_size: f32,
@@ -5345,12 +5362,6 @@ fn assistant_text_style(
     // background before this refinement. Pin both to the chat surface so the
     // header does not read as a filled band. Fenced code keeps the card fill.
     let surface = rgb(colors.root_bg);
-    let table_radius = ASSISTANT_TABLE_RADIUS.into();
-    let mut table = gpui::StyleRefinement::default().bg(surface);
-    table.corner_radii.top_left = Some(table_radius);
-    table.corner_radii.top_right = Some(table_radius);
-    table.corner_radii.bottom_left = Some(table_radius);
-    table.corner_radii.bottom_right = Some(table_radius);
     let table_head = gpui::StyleRefinement::default()
         .bg(surface)
         .text_color(rgba(colors.foreground_subtlest))
@@ -5368,7 +5379,7 @@ fn assistant_text_style(
         .with_border(theme.border)
         .with_paragraph_gap(gpui::rems(ASSISTANT_BLOCK_GAP_REM))
         .with_code_block(code_block)
-        .with_table(table)
+        .with_table(assistant_table_frame(colors))
         .with_table_head(table_head)
         .with_table_cell(table_cell)
         .with_inline_code(gpui::HighlightStyle {
@@ -6326,8 +6337,8 @@ fn empty_logo_image(dark: bool, subtlest: u32) -> Arc<gpui::Image> {
 mod tests {
     use super::{
         assistant_heading_size, assistant_heading_weight, assistant_message_is_streaming,
-        assistant_stream_motion, assistant_table_header_weight, automation_grid_columns,
-        automation_schedule_label, chat_content_width, civil_day_number,
+        assistant_stream_motion, assistant_table_frame, assistant_table_header_weight,
+        automation_grid_columns, automation_schedule_label, chat_content_width, civil_day_number,
         compact_header_actions_width, compact_header_controls_fit, compact_token_count,
         conversation_composer_width, empty_greeting, error_banner_tone, execute_command_key,
         execute_command_limit, execute_command_overflows, execute_command_text_width,
@@ -6992,6 +7003,29 @@ mod tests {
         assert_eq!(ASSISTANT_BLOCK_GAP_REM, 1.);
         assert_eq!(ASSISTANT_HEADING_PADDING_TOP, 8.);
         assert_eq!(ASSISTANT_HEADING_PADDING_BOTTOM, 16.);
+    }
+
+    #[test]
+    fn assistant_tables_enable_native_horizontal_scroll_without_forcing_nowrap() {
+        for colors in [ThemeColors::light(), ThemeColors::dark()] {
+            let table = assistant_table_frame(&colors);
+            assert_eq!(table.overflow.x, Some(gpui_kit::Overflow::Scroll));
+            assert!(table.overflow.y.is_none());
+            assert!(table.size.width.is_none());
+            assert!(table.size.height.is_none());
+            assert!(table.min_size.width.is_none());
+            assert!(table.max_size.width.is_none());
+            assert!(table.text.white_space.is_none());
+            assert_eq!(table.background, Some(gpui_kit::rgb(colors.root_bg).into()));
+            for radius in [
+                table.corner_radii.top_left,
+                table.corner_radii.top_right,
+                table.corner_radii.bottom_left,
+                table.corner_radii.bottom_right,
+            ] {
+                assert_eq!(radius, Some(px(12.).into()));
+            }
+        }
     }
 
     #[test]

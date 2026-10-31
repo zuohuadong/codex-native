@@ -96,9 +96,17 @@ impl PiDesktopApp {
                 } else if act == "open_web_window" {
                     let content = payload.get("content").and_then(|v| v.as_str()).unwrap_or("");
                     let title = payload.get("title").and_then(|v| v.as_str()).unwrap_or("Artifact");
+                    let is_dark = self.theme_preference == crate::theme::ThemePreference::Dark;
+                    let colors = if is_dark {
+                        crate::theme::ThemeColors::dark()
+                    } else {
+                        crate::theme::ThemeColors::light()
+                    };
+                    let themed_html =
+                        crate::generative_ui::inject_theme_variables_to_html(content, is_dark, &colors);
                     let temp_dir = std::env::temp_dir();
                     let file_path = temp_dir.join(format!("volt_web_{}.html", action.id));
-                    if std::fs::write(&file_path, content).is_ok() {
+                    if std::fs::write(&file_path, themed_html).is_ok() {
                         #[cfg(target_os = "macos")]
                         let _ = std::process::Command::new("open").arg(&file_path).spawn();
                         #[cfg(target_os = "windows")]

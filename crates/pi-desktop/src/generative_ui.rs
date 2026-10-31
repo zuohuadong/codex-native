@@ -160,6 +160,34 @@ pub enum UiNode {
         kind: String,
         content: String,
     },
+    PieChart {
+        #[serde(default)]
+        title: Option<String>,
+        slices: Vec<PieSlice>,
+        #[serde(default)]
+        donut: bool,
+        #[serde(default)]
+        summary: Option<String>,
+    },
+    Form {
+        id: String,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        submit_label: Option<String>,
+        fields: Vec<FormField>,
+    },
+    Rating {
+        id: String,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default = "default_max_rating")]
+        max: u32,
+        #[serde(default)]
+        value: u32,
+    },
     Divider,
 }
 
@@ -167,8 +195,48 @@ fn default_max() -> f32 {
     100.0
 }
 
+fn default_max_rating() -> u32 {
+    5
+}
+
 fn default_artifact_kind() -> String {
     "code".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PieSlice {
+    pub label: String,
+    pub value: f32,
+    #[serde(default)]
+    pub tone: Option<BadgeTone>,
+    #[serde(default)]
+    pub display_value: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FormField {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub field_type: FormFieldType,
+    #[serde(default)]
+    pub placeholder: Option<String>,
+    #[serde(default)]
+    pub default_value: Option<String>,
+    #[serde(default)]
+    pub options: Vec<String>,
+    #[serde(default)]
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FormFieldType {
+    #[default]
+    Text,
+    Select,
+    Switch,
+    Textarea,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -286,62 +354,244 @@ pub enum ContentSegment {
 }
 
 /// Parses message text containing optional ```json-ui, ```ui, ```generative-ui,
-/// or ```adaptive-card fenced blocks into a sequence of Markdown text and native UI nodes.
+/// ```adaptive-card, ```html:artifact, or <agent-embed> blocks into a sequence of Markdown text and native UI nodes.
 pub fn parse_message_segments(text: &str) -> Vec<ContentSegment> {
     let mut segments = Vec::new();
     let mut current_offset = 0;
 
-    let markers = [
+    let json_markers = [
         "```json-ui",
         "```ui",
         "```generative-ui",
         "```adaptive-card",
     ];
 
+    let html_markers = [
+        "```html:artifact",
+        "```artifact:html",
+        "```html:embed",
+    ];
+
     while current_offset < text.len() {
         let remaining = &text[current_offset..];
-        let mut earliest_match: Option<(usize, &str)> = None;
+        let lower = remaining.to_lowercase();
 
-        for marker in &markers {
-            if let Some(pos) = remaining.to_lowercase().find(marker) {
-                match earliest_match {
-                    None => earliest_match = Some((pos, marker)),
-                    Some((earliest_pos, _)) if pos < earliest_pos => {
-                        earliest_match = Some((pos, marker));
-                    }
+        let mut earliest_json: Option<(usize, &str)> = None;
+        for marker in &json_markers {
+            if let Some(pos) = lower.find(marker) {
+                match earliest_json {
+                    None => earliest_json = Some((pos, marker)),
+                    Some((p, _)) if pos < p => earliest_json = Some((pos, marker)),
                     _ => {}
                 }
             }
         }
 
-        if let Some((start_rel, marker)) = earliest_match {
-            let block_start = current_offset + start_rel;
-            let content_start = block_start + marker.len();
+        let mut earliest_html_block: Option<(usize, &str)> = None;
+        for marker in &html_markers {
+            if let Some(pos) = lower.find(marker) {
+                match earliest_html_block {
+                    None => earliest_html_block = Some((pos, marker)),
+                    Some((p, _)) if pos < p => earliest_html_block = Some((pos, marker)),
+                    _ => {}
+                }
+            }
+        }
 
-            if let Some(end_rel) = text[content_start..].find("```") {
-                let content_end = content_start + end_rel;
-                let json_candidate = text[content_start..content_end].trim();
+        let agent_embed_pos = lower.find("<agent-embed");
 
-                match serde_json::from_str::<UiNode>(json_candidate) {
-                    Ok(node) => {
-                        if block_start > current_offset {
-                            segments.push(ContentSegment::Markdown(
-                                text[current_offset..block_start].to_string(),
-                            ));
-                        }
-                        segments.push(ContentSegment::GenerativeUi(node));
-                        current_offset = content_end + 3;
-                        continue;
-                    }
-                    Err(_) => {
-                        let next_offset = block_start + marker.len();
-                        if next_offset > current_offset {
-                            current_offset = next_offset;
+        enum MatchKind<'a> {
+            Json(&'a str),
+            HtmlBlock(&'a str),
+            AgentEmbed,
+        }
+
+        let mut earliest: Option<(usize, MatchKind)> = None;
+
+        if let Some((pos, marker)) = earliest_json {
+            earliest = Some((pos, MatchKind::Json(marker)));
+        }
+
+        if let Some((pos, marker)) = earliest_html_block {
+            match earliest {
+                None => earliest = Some((pos, MatchKind::HtmlBlock(marker))),
+                Some((p, _)) if pos < p => earliest = Some((pos, MatchKind::HtmlBlock(marker))),
+                _ => {}
+            }
+        }
+
+        if let Some(pos) = agent_embed_pos {
+            match earliest {
+                None => earliest = Some((pos, MatchKind::AgentEmbed)),
+                Some((p, _)) if pos < p => earliest = Some((pos, MatchKind::AgentEmbed)),
+                _ => {}
+            }
+        }
+
+        match earliest {
+            Some((start_rel, MatchKind::Json(marker))) => {
+                let block_start = current_offset + start_rel;
+                let content_start = block_start + marker.len();
+
+                if let Some(end_rel) = text[content_start..].find("```") {
+                    let content_end = content_start + end_rel;
+                    let json_candidate = text[content_start..content_end].trim();
+
+                    match serde_json::from_str::<UiNode>(json_candidate) {
+                        Ok(node) => {
+                            if block_start > current_offset {
+                                segments.push(ContentSegment::Markdown(
+                                    text[current_offset..block_start].to_string(),
+                                ));
+                            }
+                            segments.push(ContentSegment::GenerativeUi(node));
+                            current_offset = content_end + 3;
                             continue;
+                        }
+                        Err(_) => {
+                            let next_offset = block_start + marker.len();
+                            if next_offset > current_offset {
+                                current_offset = next_offset;
+                                continue;
+                            }
                         }
                     }
                 }
             }
+            Some((start_rel, MatchKind::HtmlBlock(marker))) => {
+                let block_start = current_offset + start_rel;
+                let after_marker = block_start + marker.len();
+                let line_end = text[after_marker..]
+                    .find('\n')
+                    .map(|p| after_marker + p)
+                    .unwrap_or(after_marker);
+                let fence_params = text[after_marker..line_end].trim();
+                let content_start = if line_end < text.len() {
+                    line_end + 1
+                } else {
+                    line_end
+                };
+
+                if let Some(end_rel) = text[content_start..].find("```") {
+                    let content_end = content_start + end_rel;
+                    let html_content = text[content_start..content_end].trim().to_string();
+
+                    let title = if let Some(t_idx) = fence_params.find("title=\"") {
+                        let rest = &fence_params[t_idx + 7..];
+                        rest.split('"').next().map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                    .unwrap_or_else(|| "HTML 交互产物 (Interactive Artifact)".to_string());
+
+                    let id = format!("artifact_{}", block_start);
+
+                    if block_start > current_offset {
+                        segments.push(ContentSegment::Markdown(
+                            text[current_offset..block_start].to_string(),
+                        ));
+                    }
+                    segments.push(ContentSegment::GenerativeUi(UiNode::Artifact {
+                        id,
+                        title,
+                        kind: "html".to_string(),
+                        content: html_content,
+                    }));
+                    current_offset = content_end + 3;
+                    continue;
+                }
+            }
+            Some((start_rel, MatchKind::AgentEmbed)) => {
+                let block_start = current_offset + start_rel;
+                let rest_from_tag = &text[block_start..];
+
+                if let Some(close_tag_idx) = rest_from_tag.to_lowercase().find("</agent-embed>") {
+                    let end_of_close = block_start + close_tag_idx + "</agent-embed>".len();
+                    let inner_start_rel = rest_from_tag
+                        .find('>')
+                        .map(|p| p + 1)
+                        .unwrap_or(rest_from_tag.len());
+                    let inner_content = &rest_from_tag[inner_start_rel..close_tag_idx];
+
+                    let tag_header = &rest_from_tag[..inner_start_rel];
+                    let mut content = inner_content.trim().to_string();
+
+                    if let Some(src_pos) = tag_header.find("src=\"") {
+                        let after_src = &tag_header[src_pos + 5..];
+                        if let Some(quote_end) = after_src.find('"') {
+                            let src_path = &after_src[..quote_end];
+                            let path_clean = src_path.strip_prefix("file://").unwrap_or(src_path);
+                            if let Ok(file_content) = std::fs::read_to_string(path_clean) {
+                                content = file_content;
+                            } else if content.is_empty() {
+                                content = format!("<p>Embedded file: {}</p>", src_path);
+                            }
+                        }
+                    }
+
+                    let title = if let Some(t_idx) = tag_header.find("title=\"") {
+                        let rest = &tag_header[t_idx + 7..];
+                        rest.split('"').next().map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                    .unwrap_or_else(|| "交互组件 (Interactive Widget)".to_string());
+
+                    if block_start > current_offset {
+                        segments.push(ContentSegment::Markdown(
+                            text[current_offset..block_start].to_string(),
+                        ));
+                    }
+                    segments.push(ContentSegment::GenerativeUi(UiNode::Artifact {
+                        id: format!("embed_{}", block_start),
+                        title,
+                        kind: "html".to_string(),
+                        content,
+                    }));
+                    current_offset = end_of_close;
+                    continue;
+                } else if let Some(self_close_idx) = rest_from_tag.find("/>") {
+                    let end_of_tag = block_start + self_close_idx + 2;
+                    let tag_header = &rest_from_tag[..self_close_idx];
+                    let mut content = String::new();
+
+                    if let Some(src_pos) = tag_header.find("src=\"") {
+                        let after_src = &tag_header[src_pos + 5..];
+                        if let Some(quote_end) = after_src.find('"') {
+                            let src_path = &after_src[..quote_end];
+                            let path_clean = src_path.strip_prefix("file://").unwrap_or(src_path);
+                            if let Ok(file_content) = std::fs::read_to_string(path_clean) {
+                                content = file_content;
+                            } else {
+                                content = format!("<p>Embedded file: {}</p>", src_path);
+                            }
+                        }
+                    }
+
+                    let title = if let Some(t_idx) = tag_header.find("title=\"") {
+                        let rest = &tag_header[t_idx + 7..];
+                        rest.split('"').next().map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                    .unwrap_or_else(|| "交互组件 (Interactive Widget)".to_string());
+
+                    if block_start > current_offset {
+                        segments.push(ContentSegment::Markdown(
+                            text[current_offset..block_start].to_string(),
+                        ));
+                    }
+                    segments.push(ContentSegment::GenerativeUi(UiNode::Artifact {
+                        id: format!("embed_{}", block_start),
+                        title,
+                        kind: "html".to_string(),
+                        content,
+                    }));
+                    current_offset = end_of_tag;
+                    continue;
+                }
+            }
+            None => {}
         }
 
         if current_offset < text.len() {
@@ -351,6 +601,77 @@ pub fn parse_message_segments(text: &str) -> Vec<ContentSegment> {
     }
 
     segments
+}
+
+/// Injects host semantic design-system tokens and allowed Tailwind CDN into an HTML artifact.
+pub fn inject_theme_variables_to_html(content: &str, is_dark: bool, c: &ThemeColors) -> String {
+    if content.contains("--card:") || content.contains("--background:") {
+        return content.to_string();
+    }
+
+    let mode_class = if is_dark { "dark" } else { "light" };
+    let theme_style = format!(
+        "<style id=\"volt-theme-tokens\">\n\
+        :root {{\n\
+            --background: #{:06x};\n\
+            --content: #{:06x};\n\
+            --card: #{:06x};\n\
+            --sidebar: #{:06x};\n\
+            --border: rgba({}, {}, {}, 0.12);\n\
+            --foreground: #{:06x};\n\
+            --muted-foreground: #{:06x};\n\
+            --placeholder: rgba({}, {}, {}, 0.45);\n\
+            --primary: #{:06x};\n\
+            --primary-foreground: #{:06x};\n\
+            --secondary: #{:06x};\n\
+            --secondary-foreground: #{:06x};\n\
+            --accent: #{:06x};\n\
+        }}\n\
+        body {{ background-color: var(--background); color: var(--foreground); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }}\n\
+        </style>",
+        c.root_bg,
+        c.panel_bg,
+        c.card_bg,
+        c.sidebar_bg,
+        (c.text_primary >> 16) & 0xff,
+        (c.text_primary >> 8) & 0xff,
+        c.text_primary & 0xff,
+        c.text_primary,
+        c.foreground_subtle & 0x00ffffff,
+        (c.text_primary >> 16) & 0xff,
+        (c.text_primary >> 8) & 0xff,
+        c.text_primary & 0xff,
+        if is_dark { 0xffffff } else { 0x000000 },
+        if is_dark { 0x000000 } else { 0xffffff },
+        c.card_user_bg,
+        c.text_primary,
+        c.link,
+    );
+
+    if let Some(pos) = content.to_lowercase().find("<head>") {
+        let insert_idx = pos + 6;
+        format!(
+            "{}\n<script src=\"https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js\"></script>\n{}{}",
+            &content[..insert_idx],
+            theme_style,
+            &content[insert_idx..]
+        )
+    } else if let Some(pos) = content.to_lowercase().find("<html>") {
+        let insert_idx = pos + 6;
+        format!(
+            "{}<head>\n<script src=\"https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js\"></script>\n{}</head>{}",
+            &content[..insert_idx],
+            theme_style,
+            &content[insert_idx..]
+        )
+    } else {
+        format!(
+            "<!DOCTYPE html>\n<html class=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<script src=\"https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js\"></script>\n{}\n</head>\n<body class=\"p-4\">\n{}\n</body>\n</html>",
+            mode_class,
+            theme_style,
+            content
+        )
+    }
 }
 
 /// Renders a `UiNode` into native GPUI elements using semantic theme colors and typography.
@@ -1668,6 +1989,481 @@ pub fn render_ui_node<T: 'static>(
                 .child(body)
                 .into_any_element()
         }
+        UiNode::PieChart {
+            title,
+            slices,
+            donut,
+            summary,
+        } => {
+            let mut wrap = div().w_full().v_flex().gap(px(8.));
+            if title.is_some() || summary.is_some() {
+                let mut row = div().w_full().h_flex().items_center().justify_between();
+                if let Some(t) = title {
+                    row = row.child(
+                        div()
+                            .text_size(px(font_size))
+                            .font_semibold()
+                            .text_color(rgb(c.text_primary))
+                            .child(t.clone()),
+                    );
+                }
+                if let Some(s) = summary {
+                    row = row.child(
+                        div()
+                            .text_size(px(font_size - 1.))
+                            .font_medium()
+                            .text_color(rgba(c.foreground_subtle))
+                            .child(s.clone()),
+                    );
+                }
+                wrap = wrap.child(row);
+            }
+
+            let total: f32 = slices.iter().map(|s| s.value).sum();
+            if total <= 0.0 || slices.is_empty() {
+                return wrap.into_any_element();
+            }
+
+            let default_colors = [
+                c.accent_green,
+                c.link,
+                c.workflow_active,
+                c.workflow_error,
+                c.destructive_border,
+                c.text_primary,
+            ];
+
+            let slice_data: Vec<(f32, f32, u32)> = {
+                let mut start_ang = -std::f32::consts::FRAC_PI_2;
+                slices
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, s)| {
+                        let sweep = (s.value / total) * std::f32::consts::TAU;
+                        let end_ang = start_ang + sweep;
+                        let color = match s.tone {
+                            Some(BadgeTone::Success) => c.accent_green,
+                            Some(BadgeTone::Warning) => c.workflow_active,
+                            Some(BadgeTone::Danger) => c.workflow_error,
+                            Some(BadgeTone::Info) => c.link,
+                            Some(BadgeTone::Neutral) => c.text_primary,
+                            None => default_colors[idx % default_colors.len()],
+                        };
+                        let ret = (start_ang, end_ang, color);
+                        start_ang = end_ang;
+                        ret
+                    })
+                    .collect()
+            };
+
+            let is_donut = *donut;
+            let chart_canvas = gpui::canvas(
+                |_, _, _| (),
+                move |bounds, _, window, _| {
+                    let w = f32::from(bounds.size.width);
+                    let h = f32::from(bounds.size.height);
+                    let center_x = w.min(130.0) / 2.0;
+                    let center_y = h / 2.0;
+                    let center = bounds.origin + point(px(center_x), px(center_y));
+                    let r = (center_x.min(center_y) - 6.0).max(10.0);
+                    let inner_r = if is_donut { r * 0.55 } else { 0.0 };
+
+                    for &(start_ang, end_ang, color) in &slice_data {
+                        if (end_ang - start_ang).abs() < 0.001 {
+                            continue;
+                        }
+                        let mut path = gpui::PathBuilder::fill();
+                        let steps = ((end_ang - start_ang).abs() / 0.08).ceil().max(2.0) as usize;
+
+                        if is_donut {
+                            let p0 = center
+                                + point(px(r * start_ang.cos()), px(r * start_ang.sin()));
+                            path.move_to(p0);
+                            for step in 1..=steps {
+                                let t = start_ang
+                                    + (end_ang - start_ang) * (step as f32 / steps as f32);
+                                path.line_to(center + point(px(r * t.cos()), px(r * t.sin())));
+                            }
+                            for step in (0..=steps).rev() {
+                                let t = start_ang
+                                    + (end_ang - start_ang) * (step as f32 / steps as f32);
+                                path.line_to(
+                                    center + point(px(inner_r * t.cos()), px(inner_r * t.sin())),
+                                );
+                            }
+                            path.close();
+                        } else {
+                            path.move_to(center);
+                            for step in 0..=steps {
+                                let t = start_ang
+                                    + (end_ang - start_ang) * (step as f32 / steps as f32);
+                                path.line_to(center + point(px(r * t.cos()), px(r * t.sin())));
+                            }
+                            path.close();
+                        }
+
+                        if let Ok(built) = path.build() {
+                            window.paint_path(built, rgb(color));
+                        }
+                    }
+                },
+            )
+            .w(px(130.))
+            .h(px(110.));
+
+            let legend = div()
+                .flex_1()
+                .v_flex()
+                .justify_center()
+                .gap(px(4.))
+                .children(slices.iter().enumerate().map(|(idx, s)| {
+                    let pct = (s.value / total) * 100.0;
+                    let color = match s.tone {
+                        Some(BadgeTone::Success) => c.accent_green,
+                        Some(BadgeTone::Warning) => c.workflow_active,
+                        Some(BadgeTone::Danger) => c.workflow_error,
+                        Some(BadgeTone::Info) => c.link,
+                        Some(BadgeTone::Neutral) => c.text_primary,
+                        None => default_colors[idx % default_colors.len()],
+                    };
+                    div()
+                        .w_full()
+                        .h_flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .h_flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .child(div().w(px(8.)).h(px(8.)).rounded_full().bg(rgb(color)))
+                                .child(
+                                    div()
+                                        .text_size(px(font_size - 2.))
+                                        .text_color(rgb(c.text_primary))
+                                        .child(s.label.clone()),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .h_flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .when_some(s.display_value.as_ref(), |this, dv| {
+                                    this.child(
+                                        div()
+                                            .text_size(px(font_size - 2.))
+                                            .text_color(rgba(c.foreground_subtle))
+                                            .child(dv.clone()),
+                                    )
+                                })
+                                .child(
+                                    div()
+                                        .text_size(px(font_size - 2.))
+                                        .font_medium()
+                                        .text_color(rgb(c.text_primary))
+                                        .child(format!("{:.1}%", pct)),
+                                ),
+                        )
+                }));
+
+            let body = div()
+                .w_full()
+                .p_3()
+                .rounded(px(8.))
+                .bg(rgba(c.card_user_bg))
+                .border_1()
+                .border_color(rgba(c.card_border))
+                .h_flex()
+                .items_center()
+                .gap(px(16.))
+                .child(chart_canvas)
+                .child(legend);
+
+            wrap.child(body).into_any_element()
+        }
+        UiNode::Form {
+            id,
+            title,
+            description,
+            submit_label,
+            fields,
+        } => {
+            let mut col = div()
+                .w_full()
+                .p_4()
+                .rounded(px(10.))
+                .bg(rgb(c.card_bg))
+                .border_1()
+                .border_color(rgba(c.card_border))
+                .v_flex()
+                .gap(px(10.));
+
+            if title.is_some() || description.is_some() {
+                let mut header = div().v_flex().gap(px(2.));
+                if let Some(t) = title {
+                    header = header.child(
+                        div()
+                            .text_size(px(font_size + 1.))
+                            .font_semibold()
+                            .text_color(rgb(c.text_primary))
+                            .child(t.clone()),
+                    );
+                }
+                if let Some(d) = description {
+                    header = header.child(
+                        div()
+                            .text_size(px(font_size - 1.))
+                            .text_color(rgba(c.foreground_subtle))
+                            .child(d.clone()),
+                    );
+                }
+                col = col.child(header);
+            }
+
+            let mut summary_lines = Vec::new();
+            let mut payload_map = serde_json::Map::new();
+
+            for field in fields {
+                let f_id = field.id.clone();
+                let f_lbl = field.label.clone();
+                let val_str = field.default_value.clone().unwrap_or_default();
+                summary_lines.push(format!(
+                    "{}: {}",
+                    f_lbl,
+                    if val_str.is_empty() { "未填写" } else { &val_str }
+                ));
+                payload_map.insert(f_id.clone(), serde_json::Value::String(val_str.clone()));
+
+                let mut field_row = div().w_full().v_flex().gap(px(4.));
+                let label_el = div()
+                    .h_flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .text_size(px(font_size - 2.))
+                            .font_medium()
+                            .text_color(rgba(c.foreground_subtle))
+                            .child(f_lbl),
+                    )
+                    .when(field.required, |row| {
+                        row.child(
+                            div()
+                                .text_size(px(font_size - 2.))
+                                .text_color(rgb(c.workflow_error))
+                                .child("*"),
+                        )
+                    });
+                field_row = field_row.child(label_el);
+
+                match field.field_type {
+                    FormFieldType::Text | FormFieldType::Textarea => {
+                        let disp = if !val_str.is_empty() {
+                            val_str
+                        } else {
+                            field
+                                .placeholder
+                                .clone()
+                                .unwrap_or_else(|| "请输入...".to_string())
+                        };
+                        field_row = field_row.child(
+                            div()
+                                .w_full()
+                                .p_2()
+                                .rounded(px(6.))
+                                .bg(rgba(c.card_user_bg))
+                                .border_1()
+                                .border_color(rgba(c.card_border))
+                                .text_size(px(font_size - 1.))
+                                .text_color(if field.default_value.is_some() {
+                                    rgb(c.text_primary)
+                                } else {
+                                    rgba(c.foreground_subtlest)
+                                })
+                                .child(disp),
+                        );
+                    }
+                    FormFieldType::Select => {
+                        let selected = field
+                            .default_value
+                            .clone()
+                            .or_else(|| field.options.first().cloned())
+                            .unwrap_or_default();
+                        field_row = field_row.child(
+                            div()
+                                .w_full()
+                                .h_flex()
+                                .items_center()
+                                .justify_between()
+                                .p_2()
+                                .rounded(px(6.))
+                                .bg(rgba(c.card_user_bg))
+                                .border_1()
+                                .border_color(rgba(c.card_border))
+                                .child(
+                                    div()
+                                        .text_size(px(font_size - 1.))
+                                        .text_color(rgb(c.text_primary))
+                                        .child(selected),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(font_size - 2.))
+                                        .text_color(rgba(c.foreground_subtle))
+                                        .child("▾"),
+                                ),
+                        );
+                    }
+                    FormFieldType::Switch => {
+                        let is_on = field.default_value.as_deref() == Some("true")
+                            || field.default_value.as_deref() == Some("1");
+                        field_row = field_row.child(
+                            div()
+                                .h_flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(
+                                    div()
+                                        .w(px(28.))
+                                        .h(px(16.))
+                                        .p(px(2.))
+                                        .rounded(px(8.))
+                                        .bg(if is_on {
+                                            rgb(c.accent_green)
+                                        } else {
+                                            rgba(c.card_border)
+                                        })
+                                        .h_flex()
+                                        .items_center()
+                                        .when(is_on, |s| s.justify_end())
+                                        .child(
+                                            div()
+                                                .w(px(12.))
+                                                .h(px(12.))
+                                                .rounded_full()
+                                                .bg(rgb(0xffffff)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(font_size - 2.))
+                                        .text_color(rgba(c.foreground_subtle))
+                                        .child(if is_on { "已开启" } else { "已关闭" }),
+                                ),
+                        );
+                    }
+                }
+                col = col.child(field_row);
+            }
+
+            let btn_txt = submit_label
+                .clone()
+                .unwrap_or_else(|| "提交表单".to_string());
+            let act = UiAction {
+                id: format!("form-submit-{}", id),
+                label: btn_txt.clone(),
+                prompt: Some(format!(
+                    "已提交表单【{}】:\n{}",
+                    title.as_deref().unwrap_or("未命名表单"),
+                    summary_lines.join("\n")
+                )),
+                url: None,
+                copy_text: None,
+                payload: Some(serde_json::Value::Object(payload_map)),
+            };
+
+            let on_action_cb = on_action;
+            let brand_btn = if is_dark {
+                ButtonCustomVariant::new(cx)
+                    .color(rgb(0xffffff).into())
+                    .foreground(rgb(0x000000).into())
+                    .hover(rgba(0xffffffcc).into())
+                    .active(rgba(0xffffffe6).into())
+            } else {
+                ButtonCustomVariant::new(cx)
+                    .color(rgb(0x000000).into())
+                    .foreground(rgb(0xffffff).into())
+                    .hover(rgba(0x000000cc).into())
+                    .active(rgba(0x000000e6).into())
+            };
+
+            let submit_btn = Button::new(format!("btn-form-submit-{}", id))
+                .h(px(32.))
+                .rounded(px(8.))
+                .custom(brand_btn)
+                .w_full()
+                .child(
+                    div()
+                        .w_full()
+                        .h_flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(font_size - 1.))
+                        .font_medium()
+                        .child(btn_txt),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    on_action_cb(&act, this, window, cx);
+                }));
+
+            col.child(submit_btn).into_any_element()
+        }
+        UiNode::Rating {
+            id,
+            label,
+            max,
+            value,
+        } => {
+            let max_r = (*max).clamp(1, 10);
+            let cur_r = (*value).clamp(0, max_r);
+            let mut row = div().w_full().v_flex().gap(px(4.));
+            if let Some(lbl) = label {
+                row = row.child(
+                    div()
+                        .text_size(px(font_size - 2.))
+                        .font_medium()
+                        .text_color(rgba(c.foreground_subtle))
+                        .child(lbl.clone()),
+                );
+            }
+            let on_action_cb = on_action;
+            let stars = div()
+                .h_flex()
+                .items_center()
+                .gap(px(4.))
+                .children((1..=max_r).map(|star_idx| {
+                    let is_filled = star_idx <= cur_r;
+                    let star_char = if is_filled { "★" } else { "☆" };
+                    let act = UiAction {
+                        id: format!("{}:{}", id, star_idx),
+                        label: format!("评分 {} 星", star_idx),
+                        prompt: Some(format!("已评分：{} 星（满分 {} 星）", star_idx, max_r)),
+                        url: None,
+                        copy_text: None,
+                        payload: Some(serde_json::json!({ "id": id, "rating": star_idx })),
+                    };
+                    let on_act = on_action_cb.clone();
+                    Button::new(format!("star-{}-{}", id, star_idx))
+                        .h(px(26.))
+                        .px_2()
+                        .ghost()
+                        .child(
+                            div()
+                                .text_size(px(font_size + 2.))
+                                .text_color(if is_filled {
+                                    rgb(c.workflow_active)
+                                } else {
+                                    rgba(c.foreground_subtlest)
+                                })
+                                .child(star_char),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            on_act(&act, this, window, cx);
+                        }))
+                }));
+            row.child(stars).into_any_element()
+        }
         UiNode::Divider => div()
             .w_full()
             .h(px(1.))
@@ -1906,5 +2702,121 @@ mod tests {
         }"#;
         let artifact: Result<UiNode, _> = serde_json::from_str(artifact_json);
         assert!(artifact.is_ok());
+    }
+
+    #[test]
+    fn parses_pie_chart_and_donut_json() {
+        let json = r#"{
+            "type": "pie_chart",
+            "title": "业务请求分布",
+            "donut": true,
+            "summary": "总调用量 100k",
+            "slices": [
+                { "label": "API", "value": 45.0, "tone": "success", "display_value": "45k" },
+                { "label": "Web", "value": 35.0, "tone": "info", "display_value": "35k" },
+                { "label": "Job", "value": 20.0, "tone": "warning", "display_value": "20k" }
+            ]
+        }"#;
+        let node: Result<UiNode, _> = serde_json::from_str(json);
+        assert!(node.is_ok());
+        if let Ok(UiNode::PieChart {
+            slices, donut, summary, ..
+        }) = node
+        {
+            assert_eq!(slices.len(), 3);
+            assert!(donut);
+            assert_eq!(summary, Some("总调用量 100k".to_string()));
+        } else {
+            panic!("Expected PieChart");
+        }
+    }
+
+    #[test]
+    fn parses_form_and_rating_json() {
+        let form_json = r#"{
+            "type": "form",
+            "id": "cluster_cfg",
+            "title": "集群配置初始化",
+            "submit_label": "保存配置",
+            "fields": [
+                { "id": "name", "label": "集群名称", "field_type": "text", "default_value": "prod-k8s", "required": true },
+                { "id": "tier", "label": "规格等级", "field_type": "select", "options": ["标准型", "高并发型"], "default_value": "标准型" },
+                { "id": "ha", "label": "高可用开关", "field_type": "switch", "default_value": "true" }
+            ]
+        }"#;
+        let form_node: Result<UiNode, _> = serde_json::from_str(form_json);
+        assert!(form_node.is_ok());
+        if let Ok(UiNode::Form { fields, .. }) = form_node {
+            assert_eq!(fields.len(), 3);
+            assert!(fields[0].required);
+        } else {
+            panic!("Expected Form");
+        }
+
+        let rating_json = r#"{
+            "type": "rating",
+            "id": "agent_feedback",
+            "label": "回复质量评分",
+            "max": 5,
+            "value": 4
+        }"#;
+        let rating_node: Result<UiNode, _> = serde_json::from_str(rating_json);
+        assert!(rating_node.is_ok());
+    }
+
+    #[test]
+    fn parses_agent_embed_tag_inline() {
+        let msg = "如下是内嵌前端小组件：\n\n<agent-embed title=\"计数器小组件\">\n<button class=\"px-4 py-2 bg-blue-500\">点击递增</button>\n</agent-embed>\n请查收。";
+        let segments = parse_message_segments(msg);
+        assert_eq!(segments.len(), 3);
+        assert_eq!(
+            segments[0],
+            ContentSegment::Markdown("如下是内嵌前端小组件：\n\n".to_string())
+        );
+        if let ContentSegment::GenerativeUi(UiNode::Artifact {
+            title,
+            kind,
+            content,
+            ..
+        }) = &segments[1]
+        {
+            assert_eq!(title, "计数器小组件");
+            assert_eq!(kind, "html");
+            assert!(content.contains("点击递增"));
+        } else {
+            panic!("Expected Artifact from agent-embed");
+        }
+        assert_eq!(segments[2], ContentSegment::Markdown("\n请查收。".to_string()));
+    }
+
+    #[test]
+    fn parses_html_artifact_codeblock() {
+        let msg = "已生成数据看板：\n\n```html:artifact title=\"业务大屏\"\n<div class=\"dashboard\">大屏内容</div>\n```\n可随时在侧栏或独立视窗预览。";
+        let segments = parse_message_segments(msg);
+        assert_eq!(segments.len(), 3);
+        if let ContentSegment::GenerativeUi(UiNode::Artifact {
+            title,
+            kind,
+            content,
+            ..
+        }) = &segments[1]
+        {
+            assert_eq!(title, "业务大屏");
+            assert_eq!(kind, "html");
+            assert_eq!(content, "<div class=\"dashboard\">大屏内容</div>");
+        } else {
+            panic!("Expected Artifact from html:artifact code block");
+        }
+    }
+
+    #[test]
+    fn injects_theme_variables_to_html_properly() {
+        use crate::theme::ThemeColors;
+        let c = ThemeColors::dark();
+        let raw_html = "<div>Hello World</div>";
+        let injected = super::inject_theme_variables_to_html(raw_html, true, &c);
+        assert!(injected.contains("--card:"));
+        assert!(injected.contains("--background:"));
+        assert!(injected.contains("tailwindcss.min.js"));
     }
 }

@@ -304,6 +304,43 @@ impl SkillRegistry {
             ],
         });
 
+        // 11. Generative UI & Visual Artifacts
+        reg.register(Skill {
+            id: "generative-ui".to_string(),
+            name: "对话生成界面与交互产物 (Generative UI)".to_string(),
+            name_en: "Generative UI & Visual Artifacts".to_string(),
+            category: SkillCategory::General,
+            icon: "🎨".to_string(),
+            description: "原生 GPU 硬件加速交互界面与图表引擎，支持在会话中渲染交互卡片、表单收集、统计图表与独立 Web 视窗产物。".to_string(),
+            description_en: "GPU-accelerated native Generative UI and charting engine for conversational cards, form controls, charts, and standalone web artifacts.".to_string(),
+            system_prompt_snippet: "\
+### Skill: 对话生成 UI 与交互产物 (Generative UI & Visual Artifacts)\n\
+- 当需要向用户展示决策审批、选项单选/多选、表单输入、关键 KPI 指标、数据走势或数据分布时，可输出 ```json-ui 代码块。\n\
+- 支持的核心 UI 节点包括：\n\
+  1. 卡片与布局: `card` (带标题/副标题/徽章), `container` (横向/纵向弹性布局), `callout` (信息/成功/警告提示), `accordion` (折叠区)\n\
+  2. 表单与控制: `choice_group` (药丸选项组), `select` (单选下拉框), `input_field` (输入框提交), `toggle` (状态开关), `checkbox_group` (多选项), `form` (多字段聚合表单), `rating` (星级评分)\n\
+  3. 数据可视化: `metric` (大字指标), `line_chart` (平滑面积趋势图), `bar_chart` (柱状图), `pie_chart` (扇形/环形图), `sparkline` (迷你走势), `table` (表格)\n\
+  4. 产物与前端: `artifact` (代码/HTML/SVG) 以及 `<agent-embed src=\"...\">` (内嵌前端小组件，支持侧栏与独立 Web 视窗预览)。\n\
+- 结构化 JSON 会被客户端直接实时渲染为原生 GPU 硬件加速组件，用户操作按钮会双向回传给智能体推进任务。".to_string(),
+            cli_examples: vec![
+                CliExample {
+                    title: "生成审批确认卡片".to_string(),
+                    command: "volt-cli ui card --title \"生产部署审批\" --badge \"待确认\"".to_string(),
+                    description: "生成包含目标集群、待发版本、确认/取消操作按钮的原生交互卡片。".to_string(),
+                },
+                CliExample {
+                    title: "渲染 QPS 趋势图".to_string(),
+                    command: "volt-cli ui chart --type line --points \"120,150,220,310,290,450\"".to_string(),
+                    description: "基于 Metal GPU 硬件加速绘制平滑面积趋势曲线与关键极值统计。".to_string(),
+                },
+                CliExample {
+                    title: "渲染业务份额环形图".to_string(),
+                    command: "volt-cli ui chart --type pie --donut --slices \"API:45,Web:30,Job:25\"".to_string(),
+                    description: "原生绘制带图例与百分比标签的高清环形分布图。".to_string(),
+                },
+            ],
+        });
+
         reg
     }
 

@@ -880,7 +880,16 @@ impl PiDesktopApp {
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     let temp_dir = std::env::temp_dir();
                                     let file_path = temp_dir.join("volt_artifact_web.html");
-                                    if std::fs::write(&file_path, &content_c).is_ok() {
+                                    let is_dark = this.theme_preference == crate::theme::ThemePreference::Dark;
+                                    let host_colors = if is_dark {
+                                        ThemeColors::dark()
+                                    } else {
+                                        ThemeColors::light()
+                                    };
+                                    let themed_html = crate::generative_ui::inject_theme_variables_to_html(
+                                        &content_c, is_dark, &host_colors,
+                                    );
+                                    if std::fs::write(&file_path, &themed_html).is_ok() {
                                         #[cfg(target_os = "macos")]
                                         let _ = std::process::Command::new("open").arg(&file_path).spawn();
                                         #[cfg(target_os = "windows")]
@@ -975,19 +984,28 @@ impl PiDesktopApp {
                                             .child(self.tr("🌐 启动独立 Web 视窗运行", "🌐 Launch in Independent Web Window")),
                                     )
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        let temp_dir = std::env::temp_dir();
-                                        let file_path = temp_dir.join("volt_artifact_web.html");
-                                        if std::fs::write(&file_path, &content_c).is_ok() {
-                                            #[cfg(target_os = "macos")]
-                                            let _ = std::process::Command::new("open").arg(&file_path).spawn();
-                                            #[cfg(target_os = "windows")]
-                                            let _ = std::process::Command::new("cmd").args(["/c", "start", file_path.to_str().unwrap()]).spawn();
-                                            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-                                            let _ = std::process::Command::new("xdg-open").arg(&file_path).spawn();
-                                            this.status_message = format!("已在独立 Web 视窗中启动【{}】", title_c);
-                                            cx.notify();
-                                        }
-                                    })),
+                                    let temp_dir = std::env::temp_dir();
+                                    let file_path = temp_dir.join("volt_artifact_web.html");
+                                    let is_dark = this.theme_preference == crate::theme::ThemePreference::Dark;
+                                    let host_colors = if is_dark {
+                                        ThemeColors::dark()
+                                    } else {
+                                        ThemeColors::light()
+                                    };
+                                    let themed_html = crate::generative_ui::inject_theme_variables_to_html(
+                                        &content_c, is_dark, &host_colors,
+                                    );
+                                    if std::fs::write(&file_path, &themed_html).is_ok() {
+                                        #[cfg(target_os = "macos")]
+                                        let _ = std::process::Command::new("open").arg(&file_path).spawn();
+                                        #[cfg(target_os = "windows")]
+                                        let _ = std::process::Command::new("cmd").args(["/c", "start", file_path.to_str().unwrap()]).spawn();
+                                        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                                        let _ = std::process::Command::new("xdg-open").arg(&file_path).spawn();
+                                        this.status_message = format!("已在独立 Web 视窗中启动【{}】", title_c);
+                                        cx.notify();
+                                    }
+                                })),
                             ),
                     )
                     .child(
@@ -1006,18 +1024,83 @@ impl PiDesktopApp {
                             ),
                     )
             }
-            ArtifactViewMode::Code => div()
-                .flex_1()
-                .p_3()
-                .bg(rgba(colors.inline_code_bg))
-                .overflow_hidden()
-                .child(
-                    div()
-                        .text_size(self.ui_text(12.))
-                        .font_family(".AppleSystemUIFontMonospaced")
-                        .text_color(rgb(colors.text_primary))
-                        .child(content),
-                ),
+            ArtifactViewMode::Code => {
+                let content_c = content.clone();
+                let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+                let line_count = lines.len().max(1);
+
+                div()
+                    .flex_1()
+                    .v_flex()
+                    .bg(rgba(colors.inline_code_bg))
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .flex_1()
+                            .p_3()
+                            .h_flex()
+                            .gap(px(12.))
+                            .child(
+                                div()
+                                    .v_flex()
+                                    .items_end()
+                                    .children((1..=line_count).map(|line_no| {
+                                        div()
+                                            .text_size(self.ui_text(11.))
+                                            .font_family(".AppleSystemUIFontMonospaced")
+                                            .text_color(rgba(colors.foreground_subtlest))
+                                            .child(format!("{}", line_no))
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .v_flex()
+                                    .children(lines.into_iter().map(|line| {
+                                        let text = if line.is_empty() {
+                                            " ".to_string()
+                                        } else {
+                                            line
+                                        };
+                                        div()
+                                            .text_size(self.ui_text(11.))
+                                            .font_family(".AppleSystemUIFontMonospaced")
+                                            .text_color(rgb(colors.text_primary))
+                                            .child(text)
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .p_2()
+                            .border_t_1()
+                            .border_color(rgba(colors.card_border))
+                            .h_flex()
+                            .justify_end()
+                            .child(
+                                Button::new("artifact-copy-all-btn")
+                                    .h(px(26.))
+                                    .rounded(px(6.))
+                                    .px_3()
+                                    .secondary()
+                                    .child(
+                                        div()
+                                            .text_size(self.ui_text(11.))
+                                            .font_medium()
+                                            .child(self.tr("复制代码", "Copy Code")),
+                                    )
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                            content_c.clone(),
+                                        ));
+                                        this.status_message = this
+                                            .tr("已复制源码到剪贴板", "Source copied to clipboard")
+                                            .to_string();
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+            }
         };
 
         div()

@@ -53,6 +53,7 @@ impl PiAgent {
             5. For mathematical expressions, statistical analysis, linear regression, matrix operations, loan PMT, CAGR, unit conversions, and dates, use the native `calc` tool.\n\
             6. Keep responses concise, accurate, and focused on the solution.\n\
             7. Proceed step-by-step until the task is completely finished.\n\
+            8. For rich interactive interfaces, approval cards, forms, metrics, charts, or HTML artifacts, output structured ```json-ui code blocks (or <agent-embed>). The desktop host renders them with native GPU acceleration.\n\
             {}",
             self.workspace_dir.display(),
             skills_appendix

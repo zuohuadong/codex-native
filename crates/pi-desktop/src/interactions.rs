@@ -199,14 +199,26 @@ impl PiDesktopApp {
     ) {
         self.language = language;
         let theme = self.theme_preference;
-        self.settings_theme.update(cx, |state, cx| {
-            state.set_items(settings::theme_labels(language), window, cx);
-            state.set_selected_index(
-                Some(IndexPath::new(settings::theme_index(theme))),
-                window,
-                cx,
-            );
-        });
+        let theme_labels = settings::theme_labels(language);
+        for state in [&self.settings_appearance_theme, &self.settings_footer_theme] {
+            state.update(cx, |state, cx| {
+                state.set_items(theme_labels.clone(), window, cx);
+                state.set_selected_index(
+                    Some(IndexPath::new(settings::theme_index(theme))),
+                    window,
+                    cx,
+                );
+            });
+        }
+        let language_index = if language == Language::Chinese { 0 } else { 1 };
+        for state in [
+            &self.settings_general_language,
+            &self.settings_footer_language,
+        ] {
+            state.update(cx, |state, cx| {
+                state.set_selected_index(Some(IndexPath::new(language_index)), window, cx);
+            });
+        }
         self.settings_saved = false;
         let placeholder = self.t().input_placeholder;
         self.input_state.update(cx, |input, cx| {
@@ -223,6 +235,30 @@ impl PiDesktopApp {
                 cx,
             );
         });
+        cx.notify();
+    }
+
+    pub fn change_theme(
+        &mut self,
+        value: &SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let labels = settings::theme_labels(self.language);
+        let Some(index) = labels.iter().position(|label| label == value) else {
+            return;
+        };
+        self.theme_preference = [
+            ThemePreference::Light,
+            ThemePreference::Dark,
+            ThemePreference::Auto,
+        ][index];
+        for state in [&self.settings_appearance_theme, &self.settings_footer_theme] {
+            state.update(cx, |state, cx| {
+                state.set_selected_index(Some(IndexPath::new(index)), window, cx);
+            });
+        }
+        self.settings_saved = false;
         cx.notify();
     }
     pub fn edit_automation(
